@@ -1,0 +1,327 @@
+# Page 2 — Overview Dashboard
+
+---
+
+## Login Clarification (Applies to All Pages)
+
+There is one single login page at `/login`. No separate URLs for admin, tailor, or customer staff. The email entered determines the role. After TOTP verification the backend reads the `role` field from the `profiles` table and routes accordingly: `super_admin`, `operations_admin`, `support_agent` all land on `/overview`. If a user with a non-admin role somehow hits the admin app they are rejected at the middleware level with a 403 before any page renders. Role is stored in the JWT claims so middleware can check it without a database call on every route.
+
+---
+
+## What This Page Does
+
+The Overview page is the first page an admin sees after login. It gives a real-time snapshot of the entire platform: revenue, orders, tailors, disputes, and a live activity feed. It also shows a 90-day forecast. All data auto-refreshes every 5 minutes via TanStack Query's `refetchInterval`. The Supabase Realtime subscription on the activity feed updates instantly without polling.
+
+---
+
+## Backend — APIs Required
+
+**GET /analytics/overview**
+
+- Auth: admin JWT required, role must be super_admin or operations_admin or support_agent
+- Rate limit: 60 requests per minute per admin
+- Cache: Redis cache key `analytics:overview`, TTL 5 minutes, invalidated when any order status changes or new tailor registers
+- Response shape:
+
+```
+{
+  tailors: {
+    active: number,
+    inactive: number,
+    pending_verification: number,
+    delta_vs_yesterday: number
+  },
+  customers: {
+    total: number,
+    new_today: number,
+    delta_vs_yesterday: number
+  },
+  orders: {
+    today_count: number,
+    today_gmv_fils: number,
+    today_revenue_fils: number,
+    delta_gmv_vs_yesterday: number,
+    delta_revenue_vs_yesterday: number
+  },
+  disputes: {
+    open_count: number,
+    delta_vs_yesterday: number
+  },
+  pending_verifications: number,
+  pending_listing_reviews: number
+}
+```
+
+- Query: single SQL query using CTEs. One CTE for today's aggregates, one for yesterday's aggregates, one for tailor counts by status, one for open disputes. Return all in one response. Never make 8 separate queries for 8 KPI cards.
+
+**GET /analytics/revenue**
+
+- Query params: `period` (day, week, month, year), `from` (ISO date), `to` (ISO date)
+- Auth: admin JWT, super_admin and operations_admin only
+- Cache: Redis key `analytics:revenue:{period}:{from}:{to}`, TTL 10 minutes
+- Response: array of `{ date: string, gmv_fils: number, commission_fils: number, readymade_fils: number, custom_stitch_fils: number, material_fils: number }` one object per time bucket
+- Query: use `generate_series` in PostgreSQL to ensure every date bucket is present even if zero orders that day, LEFT JOIN orders on date. This prevents gaps in the chart line.
+
+**GET /analytics/top-tailors**
+
+- Query params: `period` (this_month, last_month, last_90_days)
+- Auth: admin JWT
+- Cache: Redis TTL 10 minutes
+- Response: array of top 10 `{ tailor_id, name, avatar_url, city, gmv_fils, order_count, rating_avg, tier }`
+- Query: aggregate orders by tailor_id for the period, join tailor_profiles, order by gmv_fils DESC, limit 10
+
+**GET /analytics/forecast**
+
+- Auth: super_admin only
+- Cache: Redis TTL 1 hour (forecast does not need to update every 5 minutes)
+- Response: array of `{ date: string, projected_gmv_fils: number, projected_revenue_fils: number, confidence: 'high' | 'medium' | 'low' }` for next 90 days
+- Calculation: compute 6-month trailing daily average, apply day-of-week weighting (weekends typically higher), apply month seasonality factor derived from same month last year if data exists. Mark confidence as high if 6 months of data exists, medium if 3 months, low if less.
+
+**Supabase Realtime subscription — activity feed**
+
+- Subscribe to `audit_logs` table INSERT events on the client using Supabase Realtime
+- RLS on audit_logs already restricts to admin roles only
+- Each new INSERT event appends to the feed in the UI
+- No separate API endpoint needed for the feed, Realtime handles it
+
+**GET /analytics/order-type-breakdown**
+
+- Query params: `from`, `to`
+- Response: `{ readymade: { count, fils }, custom_stitch: { count, fils }, material: { count, fils } }`
+- Cache: Redis TTL 5 minutes
+
+---
+
+## Frontend — Complete Page Build
+
+### Page Header
+
+Page title "Overview" in `22px` weight `500` color `#1B5E20`. Right side has a date range display showing "Today — {formatted date}" and a Refresh button with `ti-refresh` icon that manually triggers all TanStack Query refetches and shows a spinning animation during the refetch.
+
+---
+
+### KPI Stat Cards
+
+**Layout**: CSS grid `repeat(4, 1fr)` gap `16px`. On screens below `1280px` switches to `repeat(2, 1fr)`. On screens below `640px` switches to `repeat(1, 1fr)`.
+
+**8 cards in order**: Active Tailors, Total Customers, Orders Today, GMV Today, Platform Revenue Today, Open Disputes, Pending Verifications, Pending Listing Reviews.
+
+**Each card structure**:
+- Background `#F9FAFB`, border `1px solid #E5E7EB`, border-radius `10px`, padding `16px 20px`
+- Top row: card label in `13px` muted gray `#6B7280`, right side has a Tabler icon in `20px` muted green `#86BFAC`
+- Icon per card: tailors→`ti-scissors`, customers→`ti-users`, orders→`ti-shopping-bag`, GMV→`ti-chart-bar`, revenue→`ti-coin`, disputes→`ti-alert-triangle`, verifications→`ti-user-check`, listings→`ti-list-check`
+- Middle: large number in `28px` weight `600` color `#111827`. Monetary values formatted as `AED X,XXX`. Counts formatted with comma separators.
+- Bottom row: delta indicator. If positive: `ti-trending-up` icon in green `#2D7A2D` + "↑ X vs yesterday" in `12px` green. If negative: `ti-trending-down` in red `#DC2626` + "↓ X vs yesterday" in `12px` red. If zero: muted "No change" text.
+- On mount: number counts up from 0 to final value over `600ms` using a requestAnimationFrame counter. This only runs once on initial load not on every refetch.
+- Loading state: entire card replaced with a skeleton rectangle `100%` width `96px` height, shimmer animation left to right.
+
+---
+
+### Revenue Chart
+
+**Container**: white background, `1px` border, `10px` radius, padding `24px`, full width, margin-top `24px`.
+
+**Header row**: title "Revenue Overview" left in `16px` weight `500`. Right side has a toggle button group: **Day | Week | Month | Year**. Active toggle has `#2D7A2D` background white text, inactive has white background gray text, `1px` border. Clicking a toggle updates the `period` query param and refetches `/analytics/revenue`.
+
+**Chart**: Recharts `ResponsiveContainer` width `100%` height `320px`. `ComposedChart` with:
+- X axis: dates formatted based on period (Day→HH:mm, Week→Mon DD, Month→DD MMM, Year→MMM YYYY). `axisLine false`, `tickLine false`, `tick fontSize 12 fill #9CA3AF`
+- Y axis left: AED values formatted as `AED X,XXX`. `axisLine false`, `tickLine false`, `width 80`
+- CartesianGrid: horizontal lines only, `stroke #F3F4F6`, `strokeDasharray 0` (solid thin lines)
+- Three Lines: GMV `stroke #2D7A2D`, Commission `stroke #86BFAC`, Net Revenue `stroke #1B5E20`. All `strokeWidth 2`, `dot false`, `activeDot r 4`
+- The forecast segment (future dates) is rendered as a separate Line with `strokeDasharray "6 3"` to show dashed. The data array includes both actual and forecast objects. Forecast objects have a `forecast: true` flag. A custom dot renderer checks this flag and renders nothing for forecast points (no dots on dashed line).
+- ReferenceLine at today's date vertical with label "Today" in `12px` muted
+- Tooltip: custom component with white background, `1px` border, `8px` radius, padding `12px`. Shows date at top, then each series label and value formatted as AED. Tooltip does not use Recharts default styling at all.
+- Legend: custom HTML below the chart, not inside Recharts. Three items in a flex row: colored square `10px × 10px` `4px` radius + label. GMV, Commission, Net Revenue.
+
+**Loading state**: skeleton rectangle `100%` width `320px` height with shimmer.
+
+---
+
+### Two-Column Section Below Chart
+
+**Layout**: CSS grid `2fr 1fr` gap `16px`. On screens below `1024px` stacks to single column.
+
+---
+
+### Left Column — Order Type Breakdown
+
+White card, same border and radius. Padding `24px`. Title "Orders by Type" `16px` weight `500`.
+
+**Recharts DonutChart**: `PieChart` width `100%` height `260px`. Single `Pie` with `innerRadius 70` `outerRadius 100`. Three segments: Readymade `fill #2D7A2D`, Custom Stitch `fill #86BFAC`, Material Purchase `fill #D1FAE5`. No labels on the chart itself.
+
+Center of donut: absolutely positioned div showing total order count large `24px` weight `600` and label "Total Orders" `12px` muted below.
+
+Custom legend below the chart: three rows each showing colored square, type name, count, AED value, percentage. Percentage computed from total. All in a clean table-like layout with space-between.
+
+Tooltip on hover: segment lifts with `outerRadius 108` (Recharts activeShape) showing count and AED in tooltip.
+
+---
+
+### Right Column — Top Tailors
+
+White card, same border and radius. Padding `24px`. Title "Top Tailors" `16px` weight `500`. Period dropdown right-aligned:
+
+**Period dropdown**: shadcn/ui `Select` component. Options: This Month, Last Month, Last 90 Days. Default "This Month". On change refetches `/analytics/top-tailors` with new period param.
+
+**List**: 10 rows. Each row: rank number `14px` muted left, avatar `32px` circle with initials fallback, tailor name `14px` weight `500`, city `12px` muted below name, GMV right-aligned `14px` weight `500` green, tier badge far right (Basic gray, Professional blue, Premium gold). Rows separated by `1px` border. On hover row background shifts to `#F9FAFB`.
+
+View All button at bottom linking to `/tailors` page.
+
+---
+
+### Activity Feed
+
+Full-width card below the two-column section. Title "Live Activity" `16px` weight `500` left. Right side: green dot pulsing animation indicating live connection, text "Live" `12px` green next to it.
+
+**Feed list**: max height `400px`, overflow-y scroll with custom scrollbar (thin, green thumb). Each event row:
+
+- Left: icon in a `36px` circle background color based on event type:
+  - New tailor registered → `ti-user-plus` green circle
+  - Tailor verified → `ti-user-check` green circle
+  - Order placed → `ti-shopping-bag` blue circle
+  - Dispute opened → `ti-alert-triangle` amber circle
+  - Dispute resolved → `ti-check` green circle
+  - Payout processed → `ti-coin` purple circle
+  - Listing approved → `ti-list-check` green circle
+  - Account suspended → `ti-ban` red circle
+
+- Middle: event description `14px` weight `400`. Actor name in weight `500`. Example: "**Ahmed Al Rashidi** registered as a new tailor in Abu Dhabi"
+- Right: relative timestamp `12px` muted (e.g. "2 min ago"), updates live using a `setInterval` every 60 seconds recalculating all timestamps
+
+**New event animation**: when Supabase Realtime delivers a new audit_log INSERT, the new row slides down from the top of the list with Framer Motion `height` animation `0 → auto` and `opacity` `0 → 1` over `300ms`. Older events push down. List never exceeds 50 items in memory — oldest item removed when 51st arrives.
+
+**Empty state**: if no activity in last 24 hours show centered `ti-activity` icon muted with text "No recent activity".
+
+---
+
+### Forecast Section
+
+Full-width card at bottom. Title "Revenue Forecast — Next 90 Days" `16px` weight `500`. Subtitle "Based on 6-month trailing average with seasonality" `13px` muted.
+
+**Chart**: Recharts `ComposedChart` height `200px`. Shows last 30 days of actual revenue as solid green `Area` chart with `fillOpacity 0.1`. Shows next 90 days as dashed `Line` in `#86BFAC`. ReferenceLine at today. X axis shows month labels only (not every day). Y axis shows AED values.
+
+Confidence indicator: below chart shows three badges: "High Confidence" green / "Medium Confidence" amber / "Low Confidence" red — only the applicable one highlighted, others muted. Tooltip on each badge explains what confidence means.
+
+Three stat cards below the chart in a row: Projected GMV (90 days), Projected Revenue (90 days), Projected New Tailors (90 days) — each as a simple stat card.
+
+---
+
+## Database Queries
+
+**Overview KPI query** — single query using CTEs:
+
+```sql
+WITH today_orders AS (
+  SELECT 
+    COUNT(*) as order_count,
+    COALESCE(SUM(total_fils), 0) as gmv_fils,
+    COALESCE(SUM(commission_fils), 0) as revenue_fils
+  FROM orders
+  WHERE created_at >= CURRENT_DATE
+    AND status NOT IN ('cancelled', 'refunded')
+),
+yesterday_orders AS (
+  SELECT 
+    COALESCE(SUM(total_fils), 0) as gmv_fils,
+    COALESCE(SUM(commission_fils), 0) as revenue_fils
+  FROM orders
+  WHERE created_at >= CURRENT_DATE - INTERVAL '1 day'
+    AND created_at < CURRENT_DATE
+    AND status NOT IN ('cancelled', 'refunded')
+),
+tailor_counts AS (
+  SELECT
+    COUNT(*) FILTER (WHERE is_active = true AND is_verified = true) as active,
+    COUNT(*) FILTER (WHERE is_active = false) as inactive,
+    COUNT(*) FILTER (WHERE verification_status = 'pending' OR verification_status = 'under_review') as pending
+  FROM tailor_profiles
+  WHERE deleted_at IS NULL
+),
+customer_counts AS (
+  SELECT COUNT(*) as total
+  FROM customer_profiles
+  WHERE deleted_at IS NULL
+),
+dispute_counts AS (
+  SELECT COUNT(*) as open_count
+  FROM disputes
+  WHERE status IN ('open', 'awaiting_tailor_response', 'under_review')
+),
+pending_listings AS (
+  SELECT COUNT(*) as count
+  FROM listings
+  WHERE status = 'pending_review' AND deleted_at IS NULL
+)
+SELECT 
+  tc.*,
+  cc.total as customer_total,
+  tod.order_count,
+  tod.gmv_fils,
+  tod.revenue_fils,
+  yod.gmv_fils as yesterday_gmv,
+  yod.revenue_fils as yesterday_revenue,
+  dc.open_count as dispute_count,
+  pl.count as pending_listing_count
+FROM tailor_counts tc, customer_counts cc, today_orders tod, 
+     yesterday_orders yod, dispute_counts dc, pending_listings pl;
+```
+
+**Revenue time series query** using generate_series to fill gaps:
+
+```sql
+SELECT 
+  d.date::date,
+  COALESCE(SUM(o.total_fils), 0) as gmv_fils,
+  COALESCE(SUM(o.commission_fils), 0) as commission_fils,
+  COALESCE(SUM(CASE WHEN o.order_type = 'readymade' THEN o.total_fils END), 0) as readymade_fils,
+  COALESCE(SUM(CASE WHEN o.order_type = 'custom_stitch' THEN o.total_fils END), 0) as custom_stitch_fils,
+  COALESCE(SUM(CASE WHEN o.order_type = 'material' THEN o.total_fils END), 0) as material_fils
+FROM generate_series($1::date, $2::date, '1 day'::interval) AS d(date)
+LEFT JOIN orders o 
+  ON o.created_at::date = d.date::date
+  AND o.status NOT IN ('cancelled', 'refunded')
+GROUP BY d.date
+ORDER BY d.date ASC;
+```
+
+---
+
+## State Management
+
+Use TanStack Query for all server state. No Redux or Zustand needed for this page.
+
+```typescript
+const { data: overview, isLoading: overviewLoading } = useQuery({
+  queryKey: ['analytics', 'overview'],
+  queryFn: () => apiClient.get('/analytics/overview'),
+  refetchInterval: 5 * 60 * 1000,
+  staleTime: 4 * 60 * 1000,
+})
+
+const [revenuePeriod, setRevenuePeriod] = useState<'day'|'week'|'month'|'year'>('month')
+
+const { data: revenueData } = useQuery({
+  queryKey: ['analytics', 'revenue', revenuePeriod],
+  queryFn: () => apiClient.get('/analytics/revenue', { params: { period: revenuePeriod } }),
+  staleTime: 9 * 60 * 1000,
+})
+
+const [topTailorPeriod, setTopTailorPeriod] = useState<'this_month'|'last_month'|'last_90_days'>('this_month')
+
+const { data: topTailors } = useQuery({
+  queryKey: ['analytics', 'top-tailors', topTailorPeriod],
+  queryFn: () => apiClient.get('/analytics/top-tailors', { params: { period: topTailorPeriod } }),
+})
+```
+
+Realtime feed uses a `useState` array capped at 50 items. Supabase Realtime channel subscribed in a `useEffect` with cleanup on unmount.
+
+---
+
+## Security
+
+- Middleware checks JWT on every request to `/analytics/*` endpoints
+- Role check: support_agent cannot access `/analytics/revenue` or `/analytics/forecast` — returns 403
+- All monetary values computed server-side — client only receives fils integers and formats them for display
+- Redis cache keys are not user-specific (they are platform-wide aggregates) so no risk of leaking user data through cache
+- Supabase Realtime channel for audit_logs uses RLS — the subscription only receives rows that the authenticated admin is allowed to see per the RLS policy on audit_logs

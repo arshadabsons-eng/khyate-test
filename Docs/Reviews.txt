@@ -1,0 +1,106 @@
+# Page 14 — Reviews
+
+Route: `/reviews`
+
+---
+
+## What This Page Does
+
+Lists every review on the platform with moderation tools. Flagged reviews surface in a dedicated panel at the top of the page when the flagged count is non-zero. Each review opens in a moderation drawer with full text, images, links to reviewer/reviewee profiles, and three actions: keep visible, hide (with reason), remove permanently.
+
+Below the table is an analytics section with platform average rating, monthly volume, and a list of tailors below 3.5 average.
+
+---
+
+## Backend — APIs Required
+
+**GET /reviews**
+- Auth: any admin role.
+- Query params: `rating` (csv 1–5), `is_visible` (true|false|all), `is_flagged` (bool), `review_type` (customer_to_tailor|tailor_to_customer|all), `date_from`, `date_to`, `tailor_id`, `customer_id`, `page`, `limit`, `sort` (newest|oldest|rating_asc|rating_desc|flag_count_desc).
+- Response: `{ data: ReviewRow[], total, page, limit, total_pages, kpi: { total, visible, hidden, flagged, avg_rating } }`.
+
+**GET /reviews/:id** — full review with images, reviewer profile (id, masked name, avatar), reviewee profile (id, name, avatar), order link, response (if any), flag history.
+
+**POST /reviews/:id/moderate**
+- Auth: super_admin or operations_admin.
+- Body: `{ action: 'keep'|'hide'|'remove', hidden_reason?: enum, custom_text?: string }`.
+- hidden_reason enum: `inappropriate_language, false_claim, spam, off_topic, harassment, other`.
+- Sets `is_visible`, `hidden_reason`, `hidden_by`, `hidden_at`. `remove` action soft-deletes the row and triggers tailor rating recalculation.
+- Audit log with old and new values.
+
+**POST /reviews/:id/unflag** — clears flag state (after admin determines flag was unwarranted).
+
+**GET /reviews/analytics**
+- Auth: any admin role.
+- Returns: `{ platform_avg_rating, distribution: [n1, n2, n3, n4, n5], volume_this_month, volume_prior_month, tailors_below_threshold: [{ tailor_id, name, avg_rating, review_count, link }] }`.
+
+---
+
+## Frontend — Page Build
+
+### Header
+
+Title "Reviews" 22px weight 500.
+
+### Flagged Queue Panel (conditional, top of page)
+
+When `kpi.flagged > 0`: amber-bordered card with `ti-flag` icon, title "Flagged Reviews — {N}", and a horizontally scrollable list of flagged review cards. Click a card opens the moderation drawer. "View All Flagged" link filters the table to flagged.
+
+### Filters
+
+- Rating select — dropdown 1–5 stars, multi-select.
+- Visibility — segmented toggle: All | Visible | Hidden.
+- Flagged — toggle.
+- Review type — segmented toggle: All | Customer → Tailor | Tailor → Customer.
+- Date range picker.
+
+### Table
+
+Columns:
+- Reviewer — masked name + small avatar, with link icon.
+- Reviewee — name with link icon.
+- Type badge.
+- Rating — five stars compact.
+- Title — truncated.
+- Date.
+- Flagged badge — amber `ti-flag` if flag_count > 0 with tooltip showing flag reasons.
+- Visible badge — green check or gray eye-off icon.
+- Actions — three-dot: View / Moderate, Unflag.
+
+Row click opens the moderation drawer.
+
+### Moderation Drawer (right, 480px)
+
+- Reviewer + reviewee linked profiles at top.
+- Order link.
+- Star rating large + title heading + body text.
+- Image gallery (lightbox).
+- Tailor response if any (collapsible).
+- Flag history table when applicable: flagged_by, reason, date.
+- Action panel:
+  - **Keep Visible** (green) — sets `is_visible=true`, clears flag state.
+  - **Hide** (amber) — opens template reason select + custom text textarea, then confirm.
+  - **Remove Permanently** (red) — confirmation dialog requiring typed "REMOVE" to enable. Soft-deletes and recalculates tailor rating.
+
+### Analytics Section (below table)
+
+Three columns:
+1. **Platform Average Rating** — large number with five-star display, count below, delta vs prior month.
+2. **Review Volume This Month** — large number, delta vs prior month, sparkline mini-chart.
+3. **Tailors Below 3.5** — list with tailor name, rating badge red, review count, link icon. Empty state if none.
+
+---
+
+## State Management
+
+Standard pattern. Mutations on moderate trigger optimistic row update + invalidate `['reviews', filters]` on success.
+
+---
+
+## Security
+
+- Moderate action super_admin or operations_admin only; support_agent can read only.
+- Removing a review triggers a recalculation trigger on `tailor_profiles.rating_avg/rating_count` — runs at DB level.
+- Flag history visible to admins only.
+- Reviewer name always masked (e.g. "Ahmed A.") in admin and public views; only super_admin can reveal.
+- Audit log per moderate action with full old/new snapshot.

@@ -1,0 +1,121 @@
+# Page 5 — Tailor Detail
+
+Route: `/tailors/:id`
+
+---
+
+## What This Page Does
+
+Full single-tailor view with seven tabs. The same page is reached from row clicks on `/tailors`, from the Verification Queue, and via deep links from Disputes and Orders. Tab state is encoded in the URL as `?tab=overview` so admins can bookmark a specific tab.
+
+Tabs: **Overview** | **Orders** | **Listings** | **Reviews** | **Earnings** | **Documents** | **Activity Log**.
+
+---
+
+## Backend — APIs Required
+
+**GET /tailors/:id**
+- Auth: any admin role.
+- Returns full `tailor_profiles` row joined with current `tailor_subscriptions` and `tailor_balances`. Excludes `national_id_encrypted` and `bank_account_encrypted` unless the requester is super_admin (and even then returns decrypted-only-on-screen with a "view" audit log entry).
+- Response shape: `{ profile, subscription, balance, current_commission_rate, listing_counts: { active, draft, paused, rejected }, order_counts: { in_progress, completed, cancelled }, review_summary: { avg, count, distribution: [n1, n2, n3, n4, n5] } }`.
+
+**GET /tailors/:id/orders** — paginated list, status filter, date range. Includes commission_fils (admin only).
+
+**GET /tailors/:id/listings** — paginated, status filter.
+
+**GET /tailors/:id/reviews** — paginated, with filter for visibility/flagged.
+
+**GET /tailors/:id/earnings**
+- Query: `from`, `to`, `period`.
+- Response: `{ timeseries: [{ date, gmv, commission, net }], summary: { total_gmv, total_commission, total_net }, payouts: [{ id, amount, status, transfer_id, period_start, period_end, created_at }] }`.
+
+**GET /tailors/:id/documents**
+- Returns all `verification_documents` rows with signed R2 URLs valid 1 hour.
+- Response includes `reviewed_by` (joined to profile name) and `reviewed_at` per document.
+
+**POST /tailors/:id/documents/:doc_id/approve**
+- Body: `{ note?: string }`. Sets document status, audits.
+
+**POST /tailors/:id/documents/:doc_id/reject**
+- Body: `{ reason: enum, custom_text?: string }`. Reason enum: `unclear_image, expired, name_mismatch, document_type_wrong, watermarked, other`. Audits.
+
+**POST /tailors/:id/verify**
+- Body: `{ decision: 'approve'|'reject', reason?: string }`. Approve requires all required documents approved. Sends notification.
+
+**POST /tailors/:id/suspend** / **reinstate** — see Tailors page.
+
+**POST /tailors/:id/change-tier** — see Tailors page.
+
+**POST /tailors/:id/commission-override**
+- Body: `{ order_type: enum, override_rate_pct: number, valid_from: ISO, valid_until: ISO|null, reason: string }`.
+- Inserts into `commission_overrides`. Validates `0 ≤ rate ≤ 100`. Audits with old and new values.
+
+**GET /tailors/:id/activity**
+- Paginated audit_logs filtered to `entity_type='tailor' AND entity_id=:id`. Returns 50 per page.
+
+---
+
+## Frontend — Page Build
+
+### Header
+
+Avatar 56px, name large, business name muted, status badge (verified, suspended, pending). Right side action row, conditional on role and current state:
+- Approve / Reject (only when `verification_status` is pending or under_review).
+- Suspend (when active) / Reinstate (when blocked) — both behind a reason modal.
+- Change Tier — opens drawer with tier select, billing cycle, valid_from picker.
+- Send Message — opens a compose drawer.
+- Override Commission — drawer with order_type select, rate input, validity dates.
+
+Below the header: small chip row showing tier, city, joined date, last seen, current commission rate.
+
+### Tab: Overview
+
+Two-column grid.
+
+Left column:
+- Profile card: business name, description, specializations chips, languages, gender served (male/female/both), bio (en + ar with RTL), portfolio image grid (4 cols, click to lightbox via `ImageGallery`).
+- Subscription card: current tier, billing cycle, current period end, MRR contribution.
+
+Right column:
+- Stats: active listings, completed orders, dispute rate (% of orders disputed), cancellation rate, average response time hours.
+- Risk indicators: any flag from heuristics — high dispute rate red, high cancellation rate amber, low rating amber.
+
+### Tab: Orders
+
+TanStack Table of this tailor's orders. Columns: order number, customer first name, type badge, total AED, commission AED, status badge, date, link to `/orders/:id`. Filters: status, date range, type. Same component as the global Orders page but pre-filtered to this tailor.
+
+### Tab: Listings
+
+Table of this tailor's listings. Columns: image thumb, title (en), category, type badge, base price, status badge, views, saves, orders, created date, inline approve/reject for pending listings, actions menu.
+
+### Tab: Reviews
+
+List view of reviews received. Each row: rating stars, customer first name (masked), date, order type, review title and body (truncated with expand), images thumbs, response (if any). Moderate button opens the same drawer used on the Reviews page.
+
+### Tab: Earnings
+
+Earnings line chart at top (Recharts), period filter (7d, 30d, 90d, 12m), three lines: GMV, Commission, Net. Stat cards row: Total GMV, Total Commission, Total Net, Last Payout. Per-order earnings table below with: order number, type, subtotal, commission rate%, commission amount, net AED, date. Payout history table at bottom with: amount, status badge, Stripe transfer id, period range, processed date. Failed payouts highlighted amber with retry button (admin action).
+
+### Tab: Documents
+
+Vertical list of uploaded documents. Each row: document type label, file thumbnail (PDF first-page render or image), uploaded date, status badge, reviewed by + reviewed at if reviewed. Click expands inline: full document viewer with zoom controls; below the viewer: Approve and Reject buttons. Reject opens a modal with template reason select + optional custom text. Rejection sends notification to tailor with the reason. After action the document row updates inline with new status badge.
+
+### Tab: Activity Log
+
+Paginated audit_logs for this tailor — action, actor (admin name + role badge), timestamp, JSON diff button expandable. 50 entries per page.
+
+---
+
+## Database Tables Used
+
+`tailor_profiles`, `tailor_subscriptions`, `tailor_balances`, `verification_documents`, `commission_overrides`, `listings`, `orders`, `order_items`, `reviews`, `tailor_payouts`, `audit_logs`.
+
+---
+
+## Security
+
+- support_agent role hides Suspend / Change Tier / Override Commission buttons; the API also returns 403 if those endpoints are called.
+- Decrypting national_id or bank_account is super_admin only and writes a special audit log entry `pii.view`.
+- Document signed URLs expire after 1 hour. Each access is logged.
+- Commission overrides are super_admin only and ALWAYS audited with old + new values because they affect future revenue calculations.
+- Bulk operations are not supported on this page — single-tailor scope only.

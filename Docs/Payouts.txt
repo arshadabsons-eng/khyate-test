@@ -1,0 +1,127 @@
+# Page 16 — Payouts
+
+Route: `/payouts`
+
+---
+
+## What This Page Does
+
+Manages tailor payouts via Stripe Connect transfers. Three sections: payout queue (tailors with available balance), failed payouts (alerts requiring action), and payout history. Schedule configuration card sets default cadence and minimum threshold.
+
+---
+
+## Backend — APIs Required
+
+**GET /payouts/queue**
+- Auth: super_admin or operations_admin.
+- Query: `min_amount_aed`, `tailor_search`, `page`, `limit`, `sort` (balance_desc default | last_payout_asc).
+- Response: `{ data: [{ tailor_id, name, available_fils, pending_fils, last_payout_at, stripe_account_status, has_breaches }], total }`.
+- `stripe_account_status`: `active|onboarding_incomplete|charges_disabled|payouts_disabled`.
+- `has_breaches` flag indicates anything blocking payout (e.g. KYC pending, charges disabled).
+
+**POST /payouts/process**
+- Auth: super_admin or operations_admin.
+- Body: `{ tailor_ids: uuid[] }` (max 50 per request).
+- For each: validates `tailor_balances.available_fils > min_threshold`, validates `stripe_accounts.payouts_enabled=true`, creates Stripe Transfer via Connect, inserts `tailor_payouts` row with status `processing`. Returns per-id success/failure summary.
+- Webhook `transfer.paid` flips status to `paid`; `transfer.failed` flips to `failed`.
+
+**POST /payouts/process-single/:tailor_id**
+- Auth: super_admin or operations_admin.
+- Same logic, single tailor.
+
+**GET /payouts/failed**
+- Returns `tailor_payouts` rows with status `failed` from the last 30 days.
+
+**POST /payouts/:id/retry**
+- Auth: super_admin or operations_admin.
+- Re-creates the Stripe Transfer using the same parameters. Updates status to `processing`.
+
+**GET /payouts/history**
+- Query: `tailor_id?`, `from`, `to`, `status?`, `page`, `limit`.
+- Response: paginated payouts with all fields.
+
+**GET /payouts/schedule**
+- Auth: super_admin only.
+- Returns `{ frequency: 'daily'|'weekly'|'biweekly'|'manual', minimum_threshold_aed, day_of_week_or_month, last_run_at, next_run_at }`.
+
+**PUT /payouts/schedule**
+- Auth: super_admin only.
+- Body: `{ frequency, minimum_threshold_aed, day_of_week_or_month? }`.
+- Updates the cron schedule that triggers automatic payouts. Audit log.
+
+---
+
+## Frontend — Page Build
+
+### Header
+
+Title "Payouts" 22px weight 500. Right side: "Run Scheduled Payouts" button (super_admin only) triggers an immediate run of the scheduled payout job.
+
+### KPI strip
+
+Cards: Available to Pay Out (sum), Pending Balance (platform-wide), Last Run, Next Scheduled Run, Failed (30 days).
+
+### Payout Queue Table
+
+Columns:
+- Checkbox.
+- Tailor — avatar + name + link.
+- Available — `AED X,XXX` right-aligned.
+- Pending — `AED X,XXX` muted (informational).
+- Last Payout — relative date.
+- Stripe Account — colored pill: Active green, Onboarding amber, Disabled red.
+- Breaches — `ti-alert-triangle` red icon with hover tooltip listing the blocking issues.
+- Actions — Process Payout button per row (disabled if breaches).
+
+Bulk action toolbar appears on selection: "Process Selected" button calls `/payouts/process` with all ids; results modal shows per-id success/failure.
+
+### Failed Payouts Section
+
+Conditional, shown when count > 0. Amber-bordered card. List:
+- Tailor name + link.
+- Failed amount.
+- Failure reason.
+- Failed date.
+- Retry button (calls `/payouts/:id/retry`).
+
+### Payout Schedule Card
+
+White card. Form:
+- Frequency select: Daily | Weekly | Bi-weekly | Manual only.
+- When Weekly: day of week select (Mon–Sun).
+- When Bi-weekly: day of month select (1–28).
+- Minimum threshold AED input (default 100 AED) — payouts under this are skipped.
+- Last run / Next run displayed below.
+- Save button (super_admin only).
+
+### Payout History Table
+
+Tailor filter, date range, status filter. Columns: tailor, amount, commission deducted, net, status badge, Stripe transfer id, period range, created date.
+
+---
+
+## State Management
+
+```ts
+const { data: queue } = useQuery({
+  queryKey: ['payouts', 'queue', filters],
+  queryFn: () => apiClient.get('/payouts/queue', { params: filters }),
+  refetchInterval: 60_000,
+})
+
+const processBatch = useMutation({
+  mutationFn: (ids: string[]) => apiClient.post('/payouts/process', { tailor_ids: ids }),
+  onSuccess: () => queryClient.invalidateQueries({ queryKey: ['payouts'] }),
+})
+```
+
+---
+
+## Security
+
+- Schedule edits super_admin only.
+- Process and retry endpoints super_admin or operations_admin.
+- Stripe webhook handler validates Stripe-Signature on every request.
+- `tailor_payouts.amount_fils` calculated server-side from `tailor_balances.available_fils` snapshot at processing time — client-supplied amounts are ignored.
+- Audit log per process, retry, schedule change, with before/after balances.
+- Bulk process limited to 50 ids per request to avoid overlong Stripe API calls; larger queues processed in batches.

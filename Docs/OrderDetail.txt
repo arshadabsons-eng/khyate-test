@@ -1,0 +1,115 @@
+# Page 10 — Order Detail
+
+Route: `/orders/:id`
+
+---
+
+## What This Page Does
+
+Full single-order view for admin oversight. Shows the complete order timeline, items with custom-stitch specifications, payment breakdown, message thread between customer and tailor, and an action panel for refunds, force cancel, escalate to dispute, and mark delivered.
+
+---
+
+## Backend — APIs Required
+
+**GET /orders/:id**
+- Auth: any admin role.
+- Returns full order with: items (with item_snapshot), customer (id, first name, masked phone, city, link to detail), tailor (id, name, business name, link to detail), order_status_history rows, order_progress_updates with images, payments rows, refunds rows (if any), associated dispute (if any), admin_notes.
+- For custom stitch items: includes `custom_specifications` jsonb (measurement profile snapshot, fabric choices, design notes), `reference_images` array of signed URLs.
+
+**GET /orders/:id/messages**
+- Paginated, oldest first. 50 per page with cursor.
+- Marks unread messages as read on fetch (admin reads only).
+
+**POST /orders/:id/admin-note** — upsert admin notes (auto-saves on blur).
+
+**POST /orders/:id/refund** — see Orders page.
+
+**POST /orders/:id/force-cancel** — see Orders page.
+
+**POST /orders/:id/escalate** — see Orders page.
+
+**POST /orders/:id/mark-delivered** — force status from shipped to delivered.
+
+---
+
+## Frontend — Page Build
+
+### Header
+
+Order number large, status badge, payment badge, created date. Right side: link to dispute if one exists; "Open Tailor" and "Open Customer" buttons.
+
+### Status Timeline (full width, top)
+
+Vertical stepper showing every entry in `order_status_history`:
+- Each step row: status pill with status color, actor name + role, timestamp, optional note.
+- Future steps shown muted with dashed connector line.
+- Current step has a pulsing green dot indicator.
+- The custom `StatusTimeline` shared component renders this.
+
+### Two-Column Layout
+
+**Left column — Order Items**
+
+For each item in `order_items`:
+- Image thumbnail (if listing has images), title, variant label (if any), quantity, unit price, total.
+- For custom_stitch items: expandable section showing:
+  - Measurement profile snapshot table with all fields.
+  - Fabric choice — material name, color, quantity in meters.
+  - Reference images — clickable gallery (lightbox).
+  - Design notes — multi-paragraph text.
+- For material items: shows fabric type, color, quantity in meters.
+
+**Right column — Payment Breakdown**
+
+White card with vertical rows:
+- Subtotal
+- Discount (if any) — green negative value
+- Platform fee
+- Delivery fee
+- Total
+- Payment method — card brand + last 4
+- Stripe payment intent id — copy-button styled
+- Payment status badge
+
+If refunds exist, a sub-section below: each refund row shows amount, reason, initiated by, Stripe refund id, date.
+
+If a deposit was captured (custom stitch): shows deposit amount, captured date, remaining balance, capture button if order is delivered.
+
+### Admin Notes (full width below the two columns)
+
+Textarea labeled "Admin Notes (internal only — not visible to customer or tailor)". Auto-saves on blur, shows last-saved timestamp. Markdown renders below in preview mode toggle.
+
+### Message Thread (full width, collapsible, default collapsed)
+
+Embedded chat-style component showing all messages between customer and tailor (admins are read-only here — to message either party use Tailors or Customers page send-message action). Messages styled with bubbles, customer right-aligned, tailor left-aligned. Image attachments inline.
+
+### Action Panel (full width, fixed at bottom on desktop, sticky)
+
+Three sub-panels in tabs:
+
+1. **Refund** — radio toggle Full | Partial. Amount input pre-filled with full amount when Full selected, editable when Partial. Reason textarea (min 10 chars). Confirm Refund button (red outline) shows confirmation dialog with the calculated tailor commission reversal. After confirm calls API and shows success state with the new refund row appearing in the payment panel.
+
+2. **Force Cancel** — super_admin only. Reason textarea. Refund full amount checkbox. Confirm button requires typing the order number to enable.
+
+3. **Escalate to Dispute** — dispute_type select, description textarea, "Create Dispute" button. After creation navigates to the new dispute detail page.
+
+### Mark Delivered Button
+
+Conditionally visible only when status is `shipped` and admin role is super_admin or operations_admin. Confirmation dialog explains this is for the case where the tailor has failed to update.
+
+---
+
+## Database Tables Used
+
+`orders`, `order_items`, `order_status_history`, `order_progress_updates`, `order_messages`, `payments`, `refunds`, `disputes`, `audit_logs`.
+
+---
+
+## Security
+
+- Admin notes never returned in customer-facing or tailor-facing endpoints.
+- Refund amount validated server-side against remaining refundable balance.
+- Force cancel: super_admin only at API level; UI hides the panel for others.
+- Reference images and message attachments are signed URLs valid 1 hour.
+- Every action (refund, cancel, escalate, mark delivered, admin note edit) writes an audit log entry.

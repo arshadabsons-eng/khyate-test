@@ -1,0 +1,138 @@
+# Page 17 — Promotions
+
+Route: `/promotions`
+
+---
+
+## What This Page Does
+
+Manages two distinct things: paid Featured Listings (placement slots tailors purchase) and Discount Codes (admin-issued promo codes). Top of the page shows active promoted listings grouped by placement, the middle shows a performance table, and the bottom is the discount codes section.
+
+---
+
+## Backend — APIs Required
+
+### Featured Listings
+
+**GET /promotions/featured**
+- Auth: any admin role.
+- Returns active and upcoming `promoted_listings` grouped by placement: `{ homepage: [...], category_top: [...], search_top: [...] }`.
+
+**POST /promotions/featured**
+- Auth: super_admin or operations_admin.
+- Body: `{ tailor_id, listing_id?, placement, start_date, end_date, amount_paid_fils, stripe_payment_intent_id? }`.
+- Validates start < end, no overlap if max-per-placement reached.
+- Inserts `promoted_listings` row.
+- Audit.
+
+**DELETE /promotions/featured/:id** — removes a featured slot. Audit.
+
+**GET /promotions/performance**
+- Query: `from`, `to`, `placement?`.
+- Returns each promoted_listing with `impressions`, `clicks`, `ctr_pct`, `conversions` (orders attributed via UTM tracking).
+
+### Discount Codes
+
+**GET /discount-codes**
+- Query: `search`, `is_active`, `applicable_to`, `tailor_id?`, `page`, `limit`, `sort`.
+- Returns codes with usage counts.
+
+**POST /discount-codes**
+- Auth: super_admin or operations_admin.
+- Body: `{ code: string, discount_type: 'percentage'|'fixed', discount_value: number, min_order_fils: integer, max_uses: integer|null, valid_from, valid_until, applicable_to: 'all'|'readymade'|'custom_stitch'|'material', tailor_id?: uuid|null }`.
+- Code unique; if not provided server generates a 8-char random uppercase code.
+- Validates: percentage 1–100, fixed > 0, min_order ≥ 0.
+- Audit.
+
+**PUT /discount-codes/:id** — edit code (cannot edit code string after creation).
+
+**POST /discount-codes/:id/deactivate** — sets `is_active=false`. Existing uses stay.
+
+**GET /discount-codes/analytics**
+- Returns `{ most_used: [{ code, uses_count }], total_revenue_impact_fils, average_discount_applied_fils }`.
+
+---
+
+## Frontend — Page Build
+
+### Featured Listings Section
+
+Header: "Featured Listings" title + "Add Promotion" button.
+
+Three columns one per placement: Homepage | Category Top | Search Top. Each column header shows placement label + count badge.
+
+Each card in a column:
+- Listing image hero.
+- Tailor name + listing title.
+- Placement badge.
+- Start → End date range.
+- Stats row: impressions, clicks, CTR.
+- Remove button (red outline).
+
+### Add Promotion Modal
+
+shadcn Dialog 480px:
+- Placement select.
+- Tailor search async select.
+- Listing select (filtered by selected tailor).
+- Start date and end date pickers.
+- Amount paid AED input.
+- Optional Stripe payment intent id (for tracking external payments).
+- Create button.
+
+### Performance Table (full width below featured columns)
+
+Columns: placement, tailor, listing, impressions, clicks, CTR, conversions, active badge, end date, actions.
+
+Period filter at the top of the table.
+
+### Discount Codes Section
+
+White card full width below performance.
+
+Header: "Discount Codes" + "Create Code" button.
+
+Create Code form (collapsible inline form):
+- Code text input or "Generate Random" button.
+- Discount type toggle: Percentage | Fixed AED.
+- Value input (% or AED).
+- Min order AED input.
+- Max uses input (or "Unlimited" toggle setting null).
+- Valid from / valid until date pickers.
+- Applicable to select: All Order Types | Readymade | Custom Stitch | Material.
+- Tailor scope (optional) — if set, code only works for orders to this tailor.
+- Create button.
+
+Codes table:
+- Code string (copy button).
+- Type badge.
+- Discount value (formatted as % or AED).
+- Min order AED.
+- Uses / Max — e.g. "12 / 100".
+- Valid range.
+- Active badge.
+- Actions — Deactivate button.
+
+### Discount Code Analytics
+
+Below the codes table:
+- Bar chart: most-used codes by uses_count.
+- Stat cards: total revenue impact AED, average discount applied AED.
+
+---
+
+## State Management
+
+Standard pattern with TanStack Query. Mutations invalidate `['featured']` or `['discount-codes']`.
+
+---
+
+## Security
+
+- Discount code creation super_admin/operations_admin only.
+- Featured listing creation super_admin/operations_admin only.
+- Code uniqueness enforced at DB unique index.
+- Codes scoped to a tailor cannot be applied to other tailor's orders — enforced server-side at order creation, not just at display.
+- Max uses enforced atomically using `INCREMENT discount_codes.uses_count WHERE uses_count < max_uses RETURNING uses_count` to prevent races.
+- Audit log per create, edit, deactivate.
+- Impressions and clicks recorded server-side from event endpoints — never trust client values.

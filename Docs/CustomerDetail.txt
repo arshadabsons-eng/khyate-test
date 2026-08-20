@@ -1,0 +1,90 @@
+# Page 8 — Customer Detail
+
+Route: `/customers/:id`
+
+---
+
+## What This Page Does
+
+Single-customer view with five tabs: **Profile** | **Orders** | **Disputes** | **Reviews Written** | **Activity Log**. Reached from row clicks on `/customers` and from deep links in disputes and orders.
+
+---
+
+## Backend — APIs Required
+
+**GET /customers/:id**
+- Auth: any admin role.
+- Returns full `customer_profiles` row plus joined `customer_flags` records. Phone shown masked unless explicitly revealed.
+- Response: `{ profile, flag_history, stats: { total_orders, total_spent_fils, total_refunded_fils, dispute_count, average_order_value_fils, last_order_at }, default_address, addresses[] }`.
+
+**GET /customers/:id/orders** — paginated, status filter, date range.
+
+**GET /customers/:id/disputes** — paginated; shows disputes raised BY this customer with current status and outcome.
+
+**GET /customers/:id/reviews** — reviews this customer wrote. Includes is_visible and is_flagged flags so admin can see hidden reviews.
+
+**GET /customers/:id/payment-methods** — Stripe-managed cards (last 4 + brand). super_admin/operations_admin only. Logs `pii.view`.
+
+**GET /customers/:id/activity**
+- Paginated audit_logs filtered to `entity_type='customer' AND entity_id=:id`.
+
+**POST /customers/:id/suspend** / **/reinstate** / **/flag** / **/unflag** — see Customers page.
+
+**POST /customers/:id/reveal-phone** — super_admin only, returns full phone number, writes audit log.
+
+---
+
+## Frontend — Page Build
+
+### Header
+
+Avatar 56px, full name, masked phone with reveal button (logs PII view), city, joined date, status badge. Right side action row:
+- Suspend / Reinstate (state-dependent).
+- Flag / Unflag.
+- View Payment Methods (super_admin only).
+
+### Tab: Profile
+
+Two columns.
+
+Left:
+- Personal details — name, phone (masked + reveal), email, gender, date of birth (if collected), city, language preference.
+- Saved addresses list — each address card: label (Home, Work, etc.), street, city, postal code, default badge.
+
+Right:
+- Stats — total orders, total spent, total refunded (red if any), avg order value, dispute count, completion rate %.
+- Notification preferences — read-only display of customer's preferences.
+- Flag history — vertical timeline of any flags placed/cleared with admin name, reason, date.
+
+### Tab: Orders
+
+TanStack Table of customer's orders. Columns: order number, tailor name (link), type badge, total AED, status badge, date, link to `/orders/:id`. Filters: status tabs, date range, type.
+
+### Tab: Disputes
+
+List of disputes raised by this customer. Each row: dispute number, order link, type badge, outcome badge (if resolved), raised date, resolution date. Click navigates to `/disputes/:id`.
+
+### Tab: Reviews Written
+
+List of reviews. Each card: tailor name (link), star rating, title, body (truncated), date, visibility badge, flagged badge if applicable. Inline "Moderate" button opens the moderation drawer used on the Reviews page.
+
+### Tab: Activity Log
+
+Paginated audit_logs entries — login events, profile updates, orders placed, disputes raised, payment method changes. Each row: action label, actor (self or admin), IP, timestamp, expandable JSON diff. 50 entries per page.
+
+---
+
+## Database Tables Used
+
+`customer_profiles`, `customer_flags`, `customer_addresses`, `orders`, `disputes`, `reviews`, `audit_logs`.
+
+---
+
+## Security
+
+- Phone reveal restricted to super_admin; logs `pii.view`.
+- Email visible only to super_admin and operations_admin (hidden for support_agent).
+- Payment method viewing super_admin/operations_admin only; every access audited.
+- Suspend/reinstate require a reason ≥ 10 chars.
+- Flag actions are reversible by any admin; unflag is logged with the unflagging admin's id.
+- Admin notes on customer can be added in a textarea on the Profile tab — auto-saves on blur, visible only to admins, never to the customer.

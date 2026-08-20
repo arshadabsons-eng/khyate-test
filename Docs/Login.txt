@@ -1,0 +1,116 @@
+# Page 1 — Login & TOTP Verification
+
+Routes: `/login`, `/verify`
+
+---
+
+## What This Page Does
+
+Single entry point for all admin users. Two screens flow in sequence inside the same centered card: email + password, then a 6-digit TOTP code. No dashboard route is reachable until both screens succeed. The email entered determines the role — `super_admin`, `operations_admin`, and `support_agent` all land on `/overview`. A non-admin role hitting this app is rejected at middleware with 403 before any page renders. Role lives in JWT claims so middleware does not need a database call per route.
+
+---
+
+## Backend — APIs Required
+
+**POST /auth/admin-login**
+- Body (Zod-validated): `{ email: string, password: string }`
+- Rate limit: 5 attempts per email per 15 minutes via Redis sliding window. After threshold returns 429 with `retry_after_seconds`.
+- Looks up `profiles` by email, verifies bcrypt password hash, checks `is_active=true` and `is_blocked=false`, checks request IP against `admin_profiles.allowed_ip_ranges`. On IP mismatch returns 403.
+- Issues a short-lived `pre_totp_token` (JWT, TTL 5 min, audience `totp-only`) — does NOT issue a session JWT yet.
+- On any failure returns generic `{ error: 'Invalid email or password' }` — never field-specific (prevents enumeration).
+- Writes `audit_logs` entry: action `admin.login_attempt`, actor_id, ip, user_agent, success bool.
+- Response: `{ pre_totp_token: string, totp_required: true }`
+
+**POST /auth/verify-totp**
+- Body: `{ pre_totp_token: string, code: string }`
+- Validates `pre_totp_token` signature and audience. Decrypts `admin_profiles.two_fa_secret_encrypted` using server key, verifies code with a ±1 step window via the standard TOTP algorithm.
+- Lockout: after 5 wrong codes per pre_totp_token the token is invalidated; the admin must restart from `/login`. Counter is keyed in Redis by `admin_id` with 15-minute TTL.
+- On success: creates `admin_sessions` row, issues access JWT (15 min) with `role`, `admin_id`, `totp_verified: true` claims, and refresh token (7 days).
+- Sets refresh token in `Secure HttpOnly SameSite=Strict` cookie. Access JWT returned in response body — frontend stores in memory only.
+- Audit log: action `admin.login_success`.
+- Response: `{ access_token: string, expires_in: 900, profile: { id, name, role, avatar_url } }`
+
+**POST /auth/refresh**
+- Reads refresh token cookie, validates against Redis token-family store. On reuse detection invalidates the entire family and forces re-login.
+- Rotates and returns a new access token; sets new refresh cookie.
+
+**POST /auth/logout**
+- Invalidates the `admin_sessions` row, deletes refresh token family, clears cookie.
+
+**POST /auth/forgot-password**
+- Body: `{ email: string }`
+- Always returns 200 regardless of whether email exists (no enumeration). If email matches an admin, sends a password-reset email containing a one-time signed token (TTL 30 min).
+
+---
+
+## Frontend — Screen 1: Login
+
+**Layout**: full viewport, white background, centered card 480px wide, padding 24px, `border-radius: 12px`, 1px light-gray border, no drop shadow.
+
+**Card content top to bottom**:
+- Khyate green wordmark logo, 140px wide, centered.
+- Heading "Welcome back", 22px medium, color `#1B5E20`.
+- Subtext "Sign in to your admin account", 14px muted gray.
+- Email input — label "Email address", full width, 40px height, placeholder `admin@khyate.com`, `autocomplete="username"`.
+- Password input — label "Password", full width, right-side eye toggle button switching between `ti-eye` and `ti-eye-off`, `autocomplete="current-password"`.
+- Sign In button — full width, `#2D7A2D` background, white text, 40px height, hover `#1B5E20`. While the API call is in flight the label is replaced with a spinner and the button is disabled.
+- Forgot password link — centered, 14px, muted green color, navigates to `/forgot-password`.
+
+**Validation**:
+- On blur or submit attempt, empty/invalid email shows inline 13px red error directly below the field. Empty password shows inline error below the field.
+- API auth failure shows a single banner above the form: "Invalid email or password" — never field-specific. Prevents account enumeration.
+- 429 rate limit shows banner: "Too many login attempts. Try again in X minutes."
+
+**On successful credential check (200 with `pre_totp_token`)**: store the pre_totp_token in memory state only, then slide-transition to Screen 2 within the same card — old content slides left out, new content slides in from the right, 200ms ease-out via Framer Motion.
+
+---
+
+## Frontend — Screen 2: TOTP Verification
+
+Same card, same dimensions. Content replaces via slide animation.
+
+- `ti-lock` icon `#2D7A2D`, 32px, centered.
+- Heading "Two-factor verification", 18px medium.
+- Subtext "Enter the 6-digit code from your authenticator app", 14px muted.
+- Six individual digit input boxes in a horizontal row, 8px gap. Each box: 48px wide, 56px tall, centered text, 20px font, 1px gray border, focus ring `#2D7A2D`. `inputmode="numeric"`, `autocomplete="one-time-code"`, `maxLength={1}`.
+- Behaviors: typing a digit auto-advances focus to the next box; backspace on an empty box moves focus back; pasting a 6-digit code distributes across all boxes and submits on auto-fill if all 6 are present.
+- Verify button — full-width green, disabled until all 6 boxes filled, spinner during API call.
+- "Back to login" link below — clears `pre_totp_token` from memory and slides back to Screen 1.
+
+**Error states**:
+- Wrong code: all six boxes shake horizontally `±3px` for 300ms total via CSS keyframe, borders turn red, boxes clear, focus returns to first box, error text "Incorrect code. Please try again." appears below.
+- Lockout (after 5 fails): button disabled, shows "Too many attempts. Please wait MM:SS." with a live countdown driven by a `setInterval` cleanup hook. When countdown reaches zero the user is sent back to Screen 1.
+
+**On successful TOTP**: store access JWT in memory, set `totp_verified` flag in memory store, navigate to `/overview` with a full-page fade-in transition.
+
+---
+
+## Frontend — Auth Guards
+
+- Route loader on every protected route checks: access JWT present in memory AND `totp_verified=true` in memory.
+- If JWT is present but `totp_verified` flag is missing (e.g. user reloaded the page after step 1), redirect to `/login` because the in-memory `pre_totp_token` is also gone.
+- 401 responses from any API call trigger a single refresh attempt against `/auth/refresh`. If refresh fails, clear all state and redirect to `/login`.
+- 403 with `code: ip_not_allowed` redirects to a static error page explaining the IP allowlist policy.
+
+---
+
+## Database Tables Used
+
+- `profiles` — id, role, full_name, email, password_hash (bcrypt), avatar_url, is_active, is_blocked, last_seen_at
+- `admin_profiles` — id, user_id FK profiles, role, two_fa_enabled, two_fa_secret_encrypted (pgp_sym_encrypt), allowed_ip_ranges inet[], last_login_at
+- `admin_sessions` — id, admin_id FK, ip_address inet, user_agent, created_at, expires_at, invalidated_at
+- `audit_logs` — see Settings page; this page writes login attempt, login success, logout entries
+
+---
+
+## Security
+
+- Passwords hashed with bcrypt cost 12. Never logged. Never returned.
+- TOTP secrets encrypted at rest with `pgcrypto.pgp_sym_encrypt` using a key from environment. Decryption only inside Edge Functions; secret never reaches the client.
+- Access JWT held in memory only. Refresh token in `Secure HttpOnly SameSite=Strict` cookie scoped to the admin domain.
+- Refresh token reuse detection: each rotation stores the new token id under the family key in Redis. On reuse the entire family is invalidated and the admin is force-logged-out across all sessions.
+- IP allowlist enforced server-side BEFORE password verification — prevents probing from disallowed networks.
+- All login attempts (success and failure) written to `audit_logs` with IP and user-agent for forensic review.
+- CSP headers prevent script injection. HSTS forces HTTPS. `X-Frame-Options: DENY` blocks framing.
+- Generic error messages on auth failures prevent username enumeration.
+- Rate limit on login by email (5 per 15 min) AND by IP (20 per 15 min) — both must pass.

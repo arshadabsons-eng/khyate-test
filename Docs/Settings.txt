@@ -1,0 +1,114 @@
+# Page 20 — Settings
+
+Route: `/settings`
+
+---
+
+## What This Page Does
+
+Tabbed configuration page covering platform-wide policies, security, integrations, and webhook management. Each tab is independent and saves on its own primary button.
+
+Tabs: **Platform** | **Onboarding** | **Policies** | **Security** | **Integrations**.
+
+---
+
+## Backend — APIs Required
+
+**GET /settings/platform** / **PUT /settings/platform**
+- super_admin only on PUT.
+- `{ logo_file_key, name, name_ar, supported_cities: uuid[], maintenance_mode: bool, maintenance_message?: string }`.
+- Setting `maintenance_mode=true` blocks all non-admin requests at middleware level. Triggers a banner in tailor and customer apps.
+
+**GET /settings/onboarding** / **PUT /settings/onboarding**
+- super_admin only.
+- `{ required_documents: enum[], required_customer_fields: enum[] }`.
+
+**GET /settings/policies** / **PUT /settings/policies**
+- super_admin only.
+- `{ cancellation_rules: [{ stage: enum, who_bears_cost: 'customer'|'tailor'|'platform', refund_pct: number }], refund_window_days: { readymade: int, custom_stitch: int, material: int }, dispute_sla_hours: int, sample_approval_threshold_fils: int }`.
+
+**GET /settings/security** / **PUT /settings/security**
+- super_admin only.
+- `{ session_timeout_minutes: int, ip_allowlist_global: string[], require_2fa_for_all_admins: bool, login_lockout_threshold: int, login_lockout_minutes: int }`.
+
+**GET /settings/integrations**
+- super_admin only.
+- Returns connection status for Supabase, R2, Stripe, Upstash Redis. Each with `last_checked_at`, `status`, `latency_ms`, `error?`.
+
+**POST /settings/integrations/:provider/test**
+- Super_admin only. Triggers an immediate health check call. Returns latest status.
+
+**GET /settings/webhooks** / **POST /settings/webhooks/:id/regenerate-secret**
+- Lists Stripe webhook endpoints and event subscriptions. Regenerate rotates the webhook secret in Stripe (via API) and stores the new value in env-var-managed secret store.
+
+---
+
+## Frontend — Page Build
+
+### Tab: Platform
+
+- Logo upload — current logo preview, replace button using signed-URL flow.
+- Platform name (en + ar) inputs.
+- Supported cities — multi-select with chips.
+- Default currency display — read-only "AED" badge with note "AED is the only supported currency at this time".
+- Maintenance mode — Switch toggle. Turning ON opens a confirmation dialog warning "This will block all non-admin access. Confirm by typing MAINTENANCE." plus an optional maintenance message textarea shown to users.
+
+Save Changes button at bottom of tab.
+
+### Tab: Onboarding
+
+- Required document types — checkbox group: National ID, Trade License, Portfolio Certificate, Tax Registration. Tailors must upload all checked types to complete verification.
+- Required customer fields — checkbox group: Date of Birth, Gender, Default Address.
+
+Save Changes button.
+
+### Tab: Policies
+
+- **Cancellation Policy** — table with rows per order stage (placed, confirmed, in_progress, ready, shipped). Columns: stage, who bears cost (radio per row), refund percent (number input). Inline editing.
+- **Refund Window** — three inputs (Readymade, Custom Stitch, Material) in days.
+- **Dispute SLA Hours** — number input (default 48).
+- **Sample Approval Threshold** — AED input (default 1000) — custom stitch orders above this require a sample approval step before final delivery.
+
+Save Changes button.
+
+### Tab: Security
+
+- Session timeout — slider from 15 to 120 minutes.
+- Global IP Allowlist — table with CIDR input + Add button + per-row remove button. Validates CIDRs.
+- Require 2FA for all admins — Switch.
+- Login lockout — threshold (default 5) and lockout duration minutes (default 15).
+
+Save Changes button. Saving with "Require 2FA" enabled while any admin has 2FA disabled triggers a confirmation dialog listing those admins and saying they will be force-prompted to enroll on next login.
+
+### Tab: Integrations
+
+Four cards in a grid: Supabase, Cloudflare R2, Stripe, Upstash Redis. Each card:
+- Provider logo / icon.
+- Status dot — green (connected) / red (disconnected) / amber (degraded).
+- Last checked timestamp.
+- Latency ms.
+- Error message inline if disconnected.
+- "Test Connection" button.
+- Configure / Reconnect link to the provider's docs or admin URL.
+
+Below the grid: **Stripe Webhooks** section. List of registered webhook endpoints with URL, events subscribed (chips), regenerate secret button per row (super_admin only).
+
+API Keys section: list of any third-party API keys configured with masked value (last 4 chars) and a copy button. Revoke button per row.
+
+---
+
+## State Management
+
+Each tab uses its own useQuery + useMutation pair. Form state is dirty-tracked so unsaved changes prompt a leave-confirmation when the admin tries to switch tabs or navigate away.
+
+---
+
+## Security
+
+- Entire page super_admin only on PUT endpoints.
+- Maintenance mode toggle audited; turning it on bypasses the 2-minute typical settings cache TTL (cache invalidated immediately) so the block takes effect site-wide instantly.
+- IP allowlist changes do NOT invalidate existing admin sessions to prevent self-lockout — but next login will enforce the new list.
+- Webhook secret rotation: old secret remains valid for 24 hours during grace period to allow Stripe to roll over.
+- Connection test endpoints rate-limited 6/min to avoid hammering providers.
+- API key revocation immediately disables the key on the provider side via API; the row is then deleted from local config.
+- Audit log per save: action `settings.<tab>.update` with full before/after snapshot.

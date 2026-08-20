@@ -1,0 +1,138 @@
+# Page 4 — Tailor Management
+
+Route: `/tailors`
+
+---
+
+## What This Page Does
+
+Lists every tailor on the platform in a server-side paginated, filterable, sortable TanStack Table. Admins use this page to review tailor accounts, drill into a tailor's full profile (Tailor Detail page), perform single-row actions (suspend, message, change tier), and run bulk operations across selected rows. Search and filter state is encoded in the URL so admins can bookmark or share filtered views.
+
+The Verification Queue is a separate page (`/verification`) but reachable from this page via a dedicated banner showing "{N} tailors awaiting verification — Open Queue".
+
+---
+
+## Backend — APIs Required
+
+**GET /tailors**
+- Auth: any admin role.
+- Query params: `search`, `verification_status` (csv enum), `tier_ids` (csv uuid), `cities` (csv uuid), `rating_min`, `rating_max`, `joined_from`, `joined_to`, `status` (active|inactive|blocked|all), `page` (default 1), `limit` (default 25, max 100), `sort` (newest|oldest|gmv_desc|orders_desc|rating_desc|name_asc).
+- Response: `{ data: TailorRow[], total, page, limit, total_pages, kpi: { active, inactive, pending_verification, blocked } }`.
+- Implementation: full-text search on `name || ' ' || business_name || ' ' || phone` via `pg_trgm` GIN index. Aggregations (`total_orders`, `gmv_fils`) come from a materialized view `tailor_stats_mv` refreshed every 5 minutes — never aggregate orders inline for a list view.
+
+**POST /tailors/:id/suspend**
+- Auth: super_admin or operations_admin.
+- Body: `{ reason: string }` (Zod, min 10 chars).
+- Sets `tailor_profiles.is_active=false`, `block_reason=reason`, writes audit log, sends notification to tailor, cancels any in-progress orders only if reason matches a hard-violation list.
+
+**POST /tailors/:id/reinstate**
+- Auth: super_admin or operations_admin.
+- Body: `{ note?: string }`.
+- Sets `is_active=true`, clears `block_reason`, audit log, notify.
+
+**POST /tailors/:id/change-tier**
+- Auth: super_admin only.
+- Body: `{ tier_id: uuid, valid_from: ISO date, billing_cycle: 'monthly'|'annual', reason: string }`.
+- Updates `tailor_subscriptions` for this tailor — does NOT cancel Stripe subscription mid-cycle. Schedules a switch at the next renewal unless `apply_immediately=true` is passed (which then triggers proration via Stripe).
+
+**POST /tailors/bulk**
+- Auth: super_admin or operations_admin.
+- Body: `{ action: 'activate'|'deactivate'|'export', ids: uuid[], reason?: string }`.
+- Validates all ids exist, batch-updates, writes a single audit log entry with all affected ids.
+
+**POST /tailors/:id/message**
+- Auth: any admin role.
+- Body: `{ subject: string, body: string, body_ar?: string, channel: 'in_app'|'email'|'both' }`.
+- Inserts a notification + queues email via the Notifications service.
+
+**GET /tailors/export**
+- Auth: super_admin or operations_admin.
+- Query params: same filters as the list endpoint plus `format=csv`.
+- Streams a CSV via chunked response. Excludes encrypted fields (national_id, bank account). Adds rate limit 1 export per admin per minute.
+
+---
+
+## Frontend — Page Build
+
+### Header
+
+Title "Tailor Management" 22px weight 500 `#1B5E20` left. Right side: "Add Tailor" button (super_admin only) opens a drawer to create a tailor account on behalf of someone (rare, used for white-glove onboarding).
+
+Verification banner appears when `kpi.pending_verification > 0`: amber 1px-bordered card with `ti-clipboard-check` icon, text "{N} tailors awaiting verification", and a "Review Queue" link to `/verification`.
+
+### KPI strip
+
+Four small stat cards in a row: Active, Inactive, Pending Verification, Blocked. Each shows count + delta vs 7-day prior. Same component as Overview KPI card but smaller variant.
+
+### Search and Filters
+
+Search input 320px with `ti-search` icon, debounced 300ms, drives the `search` query param.
+
+Filter button right of search opens a slide-down panel. Inside the panel:
+- Verification status — multi-select chips: pending, under_review, verified, rejected.
+- Subscription tier — multi-select chips populated from `/inventory/plans`.
+- City — multi-select dropdown.
+- Rating range — dual-handle slider 0–5 stars in 0.1 steps.
+- Join date — date range picker.
+- Status — segmented toggle: All | Active | Inactive | Blocked.
+- Apply Filters (green) and Reset All (muted) buttons. Apply pushes new params to URL.
+
+### Table
+
+TanStack Table, server-side pagination, server-side sort.
+
+Columns:
+- Checkbox (sticky left) for bulk select.
+- Avatar + name — 32px circle, name 14px weight 500, business name 12px muted below.
+- Phone — formatted `+971 XX XXX XXXX`.
+- City.
+- Tier badge — colored per tier (Basic gray, Professional amber `#D97706`, Premium gold `#B8860B`).
+- Total orders — number, right-aligned.
+- GMV — formatted as `AED X,XXX`, right-aligned.
+- Rating — five small stars using `RatingStars` component plus `(N reviews)` muted.
+- Status badge — Active green, Inactive gray, Blocked red, Pending amber.
+- Joined — relative date.
+- Actions — three-dot menu opens: View, Suspend (with reason modal), Reinstate (only if blocked), Send Message, Change Tier, Open in New Tab.
+
+Row click navigates to `/tailors/:id`. Hovering a row shifts background to `#F9FAFB`.
+
+Pagination footer: "Showing X to Y of Z tailors" left; Previous, page numbers, Next right.
+
+### Bulk Action Toolbar
+
+Slides up from bottom of viewport when at least one row is selected. Fixed position, white background, 1px top shadow. Shows: "{N} selected" left; Export CSV, Bulk Activate, Bulk Deactivate, Send Bulk Message, Clear Selection right. Bulk actions show a confirmation dialog with the count and a "Type ACTIVATE/DEACTIVATE to confirm" guard for destructive actions.
+
+### Empty States
+
+- No tailors at all: centered illustration with `ti-scissors`, text "No tailors registered yet."
+- No results for current filters: text "No tailors match these filters." with a "Clear filters" link.
+
+---
+
+## State Management
+
+```ts
+const [searchParams, setSearchParams] = useSearchParams()
+const filters = parseTailorFilters(searchParams)
+
+const { data, isLoading } = useQuery({
+  queryKey: ['tailors', filters],
+  queryFn: () => apiClient.get('/tailors', { params: flatten(filters) }),
+  staleTime: 30 * 1000,
+  keepPreviousData: true,
+})
+
+const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+```
+
+Mutations use TanStack Query with optimistic updates on row-level toggles (status badge updates instantly, reverts on error toast).
+
+---
+
+## Security
+
+- All filter values validated server-side against allowed enum lists; unknown values return 400.
+- CSV export rate-limited to 1/min per admin to prevent scraping.
+- support_agent role can read but cannot suspend, reinstate, or change tier — those actions return 403 from the API, and the UI hides the buttons based on the role claim in the JWT.
+- Bulk actions enforce a max of 200 ids per request — larger selections must be broken up.
+- Audit log entry written for every action, including reads of the export endpoint.

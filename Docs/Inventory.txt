@@ -1,0 +1,668 @@
+# Page 3 — Inventory
+
+---
+
+## What This Page Does
+
+The Inventory page is a four-tab system managing everything that can be listed, sold, or configured on the platform. Tab 1 manages raw materials (fabrics) with colors, properties, and quality tiers. Tab 2 manages the dress category tree by gender. Tab 3 manages tailor subscription plans. Tab 4 manages sizes and measurement field configuration. Each tab is fully independent with its own data, filters, and CRUD operations. The active tab persists in the URL as a query param `?tab=materials` so admins can bookmark and share specific tabs.
+
+---
+
+## Backend — All APIs Required
+
+---
+
+### Materials APIs
+
+**GET /inventory/materials**
+- Auth: admin JWT any role
+- Query params: `search` (string), `material_type` (comma-separated enum values), `quality_tier` (affordable, premium, luxury), `gender` (male, female, both), `color_name` (string), `in_stock` (boolean), `is_active` (boolean), `price_min_fils` (number), `price_max_fils` (number), `page` (default 1), `limit` (default 24 for grid, 50 for table), `sort` (name_asc, name_desc, price_asc, price_desc, stock_asc, created_desc)
+- Cache: Redis key built from all query params, TTL 2 minutes
+- Response:
+```
+{
+  data: Material[],
+  total: number,
+  page: number,
+  limit: number,
+  total_pages: number
+}
+```
+- Query: filter on materials table with joins to material_colors and material_properties. Use PostgreSQL full-text search on `name || ' ' || material_type` for the search param. Use `@>` array operator to filter properties.
+
+**GET /inventory/materials/:id**
+- Returns single material with all colors array and all properties array and all images array
+- No cache, always fresh for detail view
+
+**POST /inventory/materials**
+- Auth: super_admin or operations_admin only
+- Body: Zod validated — name (required), name_ar (required), material_type (required enum), quality_tier (required enum), gender_target (required enum), price_per_meter_fils (required positive integer), minimum_order_meters (required positive number), stock_meters (required non-negative number), low_stock_threshold_meters, origin_country, care_instructions, care_instructions_ar, is_active (default true)
+- After insert: insert colors into material_colors table, insert properties into material_properties table
+- Write audit_log entry: action `material.create`, entity_type `material`, entity_id new id
+- Invalidate Redis cache keys matching `inventory:materials:*`
+- Response: created material with all relations
+
+**PUT /inventory/materials/:id**
+- Auth: super_admin or operations_admin
+- Body: same as POST but all fields optional
+- Partial update — only update fields that are present in the body
+- Colors: receive full replacement array, delete existing colors for this material and reinsert. Same for properties.
+- Write audit_log: action `material.update`, old_value and new_value as jsonb snapshots
+- Invalidate Redis cache
+- Response: updated material
+
+**DELETE /inventory/materials/:id**
+- Auth: super_admin only
+- Check: if any active listing references this material via listing_materials table, return 409 with message "Material is used in X active listings. Deactivate instead."
+- Soft delete via deleted_at timestamp
+- Write audit_log: action `material.delete`
+- Response: 200 success
+
+**POST /inventory/materials/:id/duplicate**
+- Auth: super_admin or operations_admin
+- Creates a copy of the material with name prefixed "Copy of {name}", status set to inactive, same colors and properties
+- Response: new material id and name
+
+**POST /inventory/materials/bulk**
+- Auth: super_admin or operations_admin
+- Body: `{ action: 'activate' | 'deactivate', ids: string[] }`
+- Validates all IDs exist and belong to non-deleted materials
+- Batch update is_active field
+- Write single audit_log per action with all affected IDs in entity_id as jsonb array
+- Response: `{ updated_count: number }`
+
+**POST /inventory/materials/:id/images**
+- Auth: super_admin or operations_admin
+- Body: `{ file_keys: string[], hero_index: number }`
+- Validates each file_key exists in R2 and passed virus scan (check confirmed flag in uploads table)
+- Replaces images jsonb array on material row
+- Max 5 images enforced server-side
+- Response: updated images array
+
+---
+
+### Material Colors Sub-resource
+
+Colors are stored in a separate `material_colors` table: id, material_id FK, color_name, color_name_ar, hex_code, is_available, sort_order, created_at.
+
+No separate endpoints — colors are always sent as part of the material PUT body as a full replacement array.
+
+---
+
+### Categories APIs
+
+**GET /inventory/categories**
+- Auth: admin JWT any role
+- Query params: `gender` (male, female, unisex, all — default all), `include_inactive` (boolean default false)
+- Response: nested tree structure
+```
+{
+  data: [
+    {
+      id, name, name_ar, slug, gender, icon, sort_order, is_active, listing_count,
+      children: [
+        {
+          id, name, name_ar, slug, gender, icon, sort_order, is_active, listing_count,
+          children: [
+            { id, name, name_ar, slug, is_active, listing_count }
+          ]
+        }
+      ]
+    }
+  ]
+}
+```
+- Query: single query fetching all categories ordered by sort_order, then build tree in application layer. Never do recursive SQL for a tree this shallow (max 3 levels).
+
+**POST /inventory/categories**
+- Auth: super_admin or operations_admin
+- Body: name (required), name_ar (required), slug (auto-generated from name if not provided, must be unique), gender (required enum: male, female, unisex), parent_id (nullable — null means root category), icon (Tabler icon name string), sort_order (integer)
+- Validate: if parent_id provided, check parent exists and is not already a level-3 category (max depth 3)
+- Validate slug uniqueness across all categories
+- Write audit_log
+- Response: created category
+
+**PUT /inventory/categories/:id**
+- Auth: super_admin or operations_admin
+- Cannot change gender if category has children with different gender
+- Cannot change parent_id to create circular reference
+- Validate slug uniqueness on change
+- Write audit_log with old and new values
+- Response: updated category
+
+**POST /inventory/categories/reorder**
+- Auth: super_admin or operations_admin
+- Body: `{ updates: [{ id: string, sort_order: number }] }`
+- Batch update sort_order for multiple categories in one transaction
+- All must share the same parent_id (can only reorder siblings)
+- Response: 200 success
+
+**DELETE /inventory/categories/:id**
+- Auth: super_admin only
+- Check listing_count is 0 for this category AND all descendants
+- Check no children exist — if children exist return 409 "Delete or reassign subcategories first"
+- Hard delete (categories are configuration not transactional data)
+- Write audit_log
+- Response: 200 success
+
+---
+
+### Tailor Plans APIs
+
+**GET /inventory/plans**
+- Auth: admin JWT any role
+- Response: all subscription_tiers ordered by monthly_price_fils ASC, each with `active_tailor_count` from a COUNT join on tailor_subscriptions where status=active
+- No cache — plan data changes infrequently but tailor count should be live
+
+**PUT /inventory/plans/:id**
+- Auth: super_admin only
+- Body: name, name_ar, monthly_price_fils, annual_price_fils, commission_rate_pct, max_active_listings (null means unlimited), max_portfolio_images, can_feature_listings, max_featured_slots, priority_dispute_handling, verified_badge, female_customer_eligible, is_active
+- Validate: commission_rate_pct must be between 0 and 100
+- Validate: annual_price_fils should be less than monthly_price_fils × 12 (enforce a discount)
+- Write audit_log with old and new values — plan changes affect revenue so must be audited
+- Do NOT automatically update existing tailor subscriptions — changes apply to new subscriptions only
+- Response: updated plan
+
+**GET /inventory/plans/analytics**
+- Auth: super_admin only
+- Response:
+```
+{
+  distribution: [{ tier_id, tier_name, tailor_count, percentage }],
+  mrr_fils: number,
+  arr_fils: number,
+  per_plan: [{ tier_id, tier_name, monthly_count, annual_count, mrr_fils }]
+}
+```
+- Query: join tailor_subscriptions with subscription_tiers, group by tier, calculate MRR (monthly subscribers × monthly price + annual subscribers × annual price / 12)
+
+---
+
+### Size Management APIs
+
+**GET /inventory/sizes**
+- Auth: admin JWT any role
+- Response: all sizes ordered by sort_order, each with `{ id, label, chest_min_cm, chest_max_cm, waist_min_cm, waist_max_cm, hips_min_cm, hips_max_cm, description, is_active, sort_order }`
+
+**POST /inventory/sizes**
+- Auth: super_admin or operations_admin
+- Body: label (required unique), chest_min_cm, chest_max_cm, waist_min_cm, waist_max_cm, hips_min_cm, hips_max_cm, description, sort_order
+- Write audit_log
+- Response: created size
+
+**PUT /inventory/sizes/:id**
+- Auth: super_admin or operations_admin
+- Partial update
+- Write audit_log
+- Response: updated size
+
+**POST /inventory/sizes/reorder**
+- Body: `{ updates: [{ id, sort_order }] }`
+- Batch update sort_order in one transaction
+
+**GET /inventory/measurement-fields**
+- Auth: admin JWT any role
+- Response: all measurement fields ordered by display_order
+
+**PUT /inventory/measurement-fields**
+- Auth: super_admin only
+- Body: full replacement array of `{ id, field_name, field_name_ar, unit, is_required, display_order, description, description_ar }`
+- Validate: cannot remove a field that has data in measurement_profiles — return 409 with count of affected profiles
+- Upsert all rows in one transaction
+- Write audit_log
+- Response: updated fields array
+
+**POST /inventory/size-guides**
+- Auth: super_admin or operations_admin
+- Body: `{ gender: 'male' | 'female', file_key: string }`
+- Validates file_key exists and is confirmed in uploads table
+- Upserts a size_guides table row (id, gender unique, file_key, uploaded_by FK, uploaded_at)
+- Response: size guide record
+
+---
+
+## Database Tables Needed for Inventory Page
+
+**materials** — id uuid PK, name varchar, name_ar varchar, material_type enum, quality_tier enum (affordable, premium, luxury), gender_target enum (male, female, both), price_per_meter_fils integer, minimum_order_meters numeric, stock_meters numeric, low_stock_threshold_meters numeric default 10, origin_country varchar, care_instructions text, care_instructions_ar text, images jsonb default '[]', is_active boolean default true, created_by FK profiles, created_at, updated_at, deleted_at
+
+**material_colors** — id uuid PK, material_id FK materials, color_name varchar, color_name_ar varchar, hex_code char(7), is_available boolean default true, sort_order integer, created_at
+
+**material_properties** — id uuid PK, material_id FK materials, property enum (breathable, stretchable, wrinkle_resistant, hypoallergenic, dry_clean_only, machine_washable, lightweight, heavyweight, sheer, opaque, anti_pilling, moisture_wicking), created_at
+
+**sizes** — id uuid PK, label varchar unique, chest_min_cm numeric, chest_max_cm numeric, waist_min_cm numeric, waist_max_cm numeric, hips_min_cm numeric, hips_max_cm numeric, description text, is_active boolean default true, sort_order integer, created_at, updated_at
+
+**measurement_fields** — id uuid PK, field_name varchar unique, field_name_ar varchar, unit enum (cm, kg), is_required boolean default false, display_order integer, description text, description_ar text, body_group enum (upper_body, mid_body, lower_body, general), created_at, updated_at
+
+**size_guides** — id uuid PK, gender enum (male, female) unique, file_key varchar, uploaded_by FK profiles, uploaded_at timestamp
+
+**Indexes**:
+```sql
+CREATE INDEX idx_materials_type ON materials(material_type) WHERE deleted_at IS NULL;
+CREATE INDEX idx_materials_tier ON materials(quality_tier) WHERE deleted_at IS NULL;
+CREATE INDEX idx_materials_gender ON materials(gender_target) WHERE deleted_at IS NULL;
+CREATE INDEX idx_materials_active ON materials(is_active) WHERE deleted_at IS NULL;
+CREATE INDEX idx_materials_fulltext ON materials USING gin(to_tsvector('english', name || ' ' || material_type));
+CREATE INDEX idx_material_colors_material ON material_colors(material_id);
+CREATE INDEX idx_material_properties_material ON material_properties(material_id);
+CREATE INDEX idx_categories_parent ON categories(parent_id);
+CREATE INDEX idx_categories_gender ON categories(gender);
+CREATE INDEX idx_sizes_sort ON sizes(sort_order);
+CREATE INDEX idx_measurement_fields_order ON measurement_fields(display_order);
+```
+
+**RLS on materials**: admins all. Tailors can read active non-deleted materials. Customers can read active non-deleted materials. Nobody except service role can update deleted_at directly.
+
+**RLS on material_colors and material_properties**: same read access as parent material. Write only for admins via service role in Edge Functions.
+
+---
+
+## Frontend — Complete Page Build
+
+---
+
+### Page Header
+
+Page title "Inventory" `22px` weight `500` color `#1B5E20`. Below it a subtitle "Manage materials, categories, plans and sizes" `14px` muted gray.
+
+---
+
+### Tab Bar
+
+Four tabs in a horizontal row. Tabs: **Materials** | **Categories** | **Tailor Plans** | **Size Management**.
+
+Tab styling: inactive tabs have transparent background, `14px` weight `400` gray text. Active tab has `14px` weight `500` `#2D7A2D` text and a `2px` solid `#2D7A2D` bottom border. Tabs are `paddingBottom: 12px`. Below the tab row a full-width `1px` `#E5E7EB` border acts as a baseline.
+
+Tab change: URL updates to `?tab=materials` or `?tab=categories` etc. Content section below transitions with Framer Motion `opacity 0 → 1` over `150ms`. Tab state is read from URL on mount so page is bookmarkable and browser back works correctly.
+
+---
+
+## Tab 1 — Materials
+
+---
+
+### Top Bar
+
+Three elements in a horizontal row:
+
+**Left**: search input `320px` wide with `ti-search` icon inside left side. Placeholder "Search materials...". Debounced `300ms` — triggers API refetch with `search` param on each keystroke after debounce.
+
+**Center**: Filter button with `ti-filter` icon and label "Filters". If any filter is active show a green badge with the count of active filters (e.g. "Filters · 3"). Clicking toggles the filter panel open/closed.
+
+**Right**: two buttons side by side. View toggle: two icon buttons `ti-layout-grid` and `ti-list` for grid vs table view, active view button has green background. Add Material button: green background, white text, `ti-plus` icon, `"Add Material"` label.
+
+---
+
+### Filter Panel
+
+Slides down from below the top bar using Framer Motion `height: 0 → auto` `opacity: 0 → 1` over `200ms`. White background, `1px` bottom border, padding `20px 0`.
+
+**Inside the filter panel — one horizontal row of filter groups**:
+
+**Material Type** multi-select chip group: chips for Wool, Cotton, Silk, Micromodal, Polyester, Linen, Chiffon, Velvet, Denim, Georgette, Crepe, Satin, Other. Each chip is `12px` text, `6px` padding, `20px` border-radius, `1px` gray border. Selected chips: `#2D7A2D` background white text. Multiple selection allowed.
+
+**Quality Tier** toggle group: three buttons Affordable | Premium | Luxury in a segmented control. Multiple selection allowed. Affordable selected → green. Premium → amber. Luxury → gold `#B8860B`.
+
+**Gender** toggle: Male | Female | Both — single select pill buttons.
+
+**Color** filter: a row of filled circle swatches `20px` diameter. Clicking a swatch selects it (shows a white tick inside). Swatch colors are loaded from a distinct query on material_colors table returning unique hex_codes and color names. Tooltip on hover shows color name.
+
+**In Stock Only** — shadcn/ui Switch toggle with label.
+
+**Active Only** — shadcn/ui Switch toggle with label.
+
+**Price Range** — dual-handle shadcn/ui Slider. Min 0 AED, max 500 AED (configurable). Shows current range as "AED X — AED Y" above the slider. Updates filter on mouse-up only not during drag.
+
+**Right side of filter panel**: Apply Filters button (green) and Reset All link (muted red). Apply triggers API refetch. Reset clears all filter state and refetches with no filters.
+
+---
+
+### Grid View (default)
+
+Responsive CSS grid: `repeat(3, 1fr)` on wide, `repeat(2, 1fr)` on medium, `1fr` on mobile. Gap `16px`. Renders on mount with staggered Framer Motion fade-in: card N has `delay: N × 0.03s`, `opacity 0 → 1`, `y: 8 → 0`, duration `200ms`. This creates a cascade effect without being distracting.
+
+**Each Material Card**:
+
+Structure — white background, `1px` `#E5E7EB` border, `10px` radius, `overflow: hidden`, no drop shadow.
+
+**Image area** `180px` height: hero image from first item in images array, `object-fit: cover`. If no images show a placeholder with `ti-scissors` icon centered on `#F9FAFB` background. Overlaid on image:
+- Top-left: gender pill `M` / `F` / `M+F` — `10px` font, `4px 8px` padding, white text, `#00000066` background, `4px` radius
+- Top-right: quality tier badge — Affordable `#2D7A2D`, Premium `#D97706`, Luxury `#B8860B` — white text `11px` weight `500`
+- Bottom-right: active toggle — shadcn/ui Switch `small` variant, white background behind it. Toggle updates `is_active` via PUT immediately with optimistic update.
+
+**Content area** padding `14px`:
+- Material name `15px` weight `500` `#111827`, single line with ellipsis overflow
+- Material type tag `12px` `#6B7280` with a small colored dot before it (color coded per type: wool=brown, silk=purple, cotton=blue, etc)
+- Color swatches row: filled circles `14px` diameter with `2px` gap. Show up to 6. If more than 6 show `+N` text in muted gray `12px`. Hovering the swatch row expands to show all swatches and color names in a floating tooltip — white card, `8px` radius, `1px` border, padding `8px`, max-width `200px`.
+- Price row: `AED X.XX /meter` in `14px` weight `500` `#2D7A2D` left. Stock level right: if stock > threshold show `{X}m` in `12px` green. If below threshold show `{X}m` in amber with `ti-alert-triangle` icon. If zero show `Out of Stock` in red.
+- Stock progress bar: `4px` height, `4px` radius, full width. Gray background. Fill color: green if above 30% of some reference max (use low_stock_threshold × 5 as the reference max for display purposes), amber if between 10% and 30%, red if below 10%. Animate width on card mount `0 → actual width` over `400ms` ease-out.
+- Properties row: first 3 properties as small gray chips. If more than 3 show `+N more` link. Clicking `+N more` expands inline — remaining chips animate in with height transition `150ms`.
+- Bottom row: three-dot menu button right-aligned. Menu items: Edit, Duplicate, Deactivate / Activate (toggle), Delete. Delete shows confirmation dialog with material name to type to confirm.
+
+---
+
+### Table View
+
+TanStack Table full width. Columns:
+
+**Image**: `60px` wide — thumbnail `48px × 48px` `6px` radius `object-fit: cover`
+
+**Material**: material name `14px` weight `500` on first line. Material type tag muted below. Clicking name opens detail drawer.
+
+**Quality Tier**: badge — Affordable green, Premium amber, Luxury gold
+
+**Gender**: pill M / F / M+F
+
+**Colors**: filled swatches inline, up to 4, `+N` overflow
+
+**Stock**: `{X}m` with color coding and progress mini-bar `60px` wide `4px` high
+
+**Price**: AED per meter right-aligned
+
+**Properties**: count badge showing number of properties, hover to see list in tooltip
+
+**Active**: Switch toggle
+
+**Created**: formatted date `13px` muted
+
+**Actions**: three-dot menu with same options as grid view
+
+Checkbox column on left for bulk selection. Bulk action toolbar slides in from bottom of page when any rows selected — fixed position bar with count of selected, Export CSV, Bulk Activate, Bulk Deactivate, Bulk Change Tier (dropdown select), Deselect All.
+
+Pagination below table: Previous, page numbers, Next. Shows "Showing X to Y of Z materials".
+
+---
+
+### Material Detail Drawer
+
+Slides in from right, `480px` wide, full viewport height, `overflow-y: scroll`. White background. Framer Motion `x: 480 → 0` over `200ms` ease-out. Backdrop overlay `rgba(0,0,0,0.3)` covers rest of page. Clicking backdrop closes drawer.
+
+**Drawer header**: title "Edit Material" or "Add Material" `18px` weight `500`. Close button `ti-x` top-right. Below header a `1px` border separator.
+
+**Sections inside drawer** with `20px` padding, `24px` gap between sections. Each section has a `14px` weight `500` section label above and a `1px` `#F3F4F6` divider below the label.
+
+**Section 1 — Images**
+
+Horizontal scroll row of image slots. Each slot `80px × 80px` `8px` radius `object-fit: cover`. Slots render existing images. Last slot (if under 5) is an add-image button showing `ti-plus` icon on `#F9FAFB` background with dashed `1px` border. Clicking add-image calls `POST /uploads/sign` to get signed URL then uploads file directly to R2 then calls `POST /uploads/confirm`. On confirm success image appears in slot. Existing image slots: hovering shows overlay with `ti-trash` icon (delete) and `ti-star` icon (set as hero). Hero image has a gold star badge in corner.
+
+**Section 2 — Basic Info**
+
+Four fields:
+- Material Name (English) — text input required
+- Material Name (Arabic) — text input required, RTL text direction applied to this field specifically via `dir="rtl"` on the input
+- Material Type — shadcn/ui Select with all 13 options. On change updates the type-specific color dot in the card preview.
+- Quality Tier — three radio cards side by side: Affordable (green border when selected), Premium (amber border), Luxury (gold border). Each card shows the tier name and a brief descriptor ("Great value", "Superior quality", "Finest materials"). Radio cards are `full-width / 3` with `8px` gap.
+- Gender Applicability — three segmented toggle buttons: Male / Female / Both
+
+**Section 3 — Pricing and Stock**
+
+Four fields in two columns:
+- Price per Meter (AED) — number input, converts to fils on save (multiply by 100)
+- Minimum Order (meters) — number input
+- Current Stock (meters) — number input
+- Low Stock Alert (meters) — number input with helper text "You'll see a warning when stock drops below this"
+- Origin Country — text input
+
+**Section 4 — Colors**
+
+Label row: "Colors" heading left, "Add Color" button right with `ti-plus` icon in green.
+
+Each color row: color picker `32px × 32px` circle (clicking opens a native color picker input type=color hidden behind it), color name text input `200px`, Arabic name input `160px`, Available toggle switch, drag handle `ti-grip-vertical` muted for reorder, delete button `ti-trash` muted red on hover. Rows can be reordered via drag handle.
+
+Clicking Add Color appends a new row with empty fields and a random default hex. New row fades in with Framer Motion `opacity 0 → 1` `height 0 → auto` `150ms`.
+
+**Section 5 — Properties**
+
+Grid of toggleable chips `4` per row. Each chip: property name, `8px 14px` padding, `20px` radius, `1px` border. Unselected: white background gray border gray text. Selected: `#E8F5E9` background `#2D7A2D` border `#2D7A2D` text with `ti-check` icon before text. Clicking toggles selected state. All 12 properties shown: Breathable, Stretchable, Wrinkle-Resistant, Hypoallergenic, Dry-Clean Only, Machine-Washable, Lightweight, Heavyweight, Sheer, Opaque, Anti-Pilling, Moisture-Wicking.
+
+**Section 6 — Care Instructions**
+
+Two textareas side by side: Care Instructions (English) and Care Instructions (Arabic) with `dir="rtl"` on Arabic field. Each `120px` height with resize disabled.
+
+**Section 7 — Status**
+
+Active toggle switch with label "Material is active and visible to tailors and customers".
+
+**Drawer footer**: fixed at bottom of drawer, white background, `1px` top border, padding `16px 20px`. Left: Cancel link. Right: Save Changes button (green, shows loading spinner during API call). On save success: drawer closes, success toast appears, grid/table refetches. On save error: error toast with message from API.
+
+---
+
+## Tab 2 — Categories
+
+---
+
+### Top Bar
+
+"Categories" section heading muted left. Right side: Gender filter toggle All | Male | Female | Unisex — filters the tree to show only that gender's categories. Add Category button green with `ti-plus`.
+
+---
+
+### Category Tree
+
+Full-width white card `1px` border `10px` radius. No padding on the card itself — the tree fills it edge to edge.
+
+**Gender header rows**: three collapsible sections — Male, Female, Unisex. Header row: `48px` height, `#F9FAFB` background, left side has gender icon (`ti-man`, `ti-woman`, `ti-gender-bigender`) in `20px` green, gender label `15px` weight `500`, category count badge `12px` gray right of label, right side has chevron `ti-chevron-down` rotating to `ti-chevron-up` when expanded, and "Add Category" text button. Clicking header row toggles collapse. All three expanded by default. Framer Motion `height: 0 → auto` for collapse/expand.
+
+**Level 1 Category rows** (indented `0px` from left): `44px` height, `1px` bottom border `#F5F5F5`. Left to right: drag handle `ti-grip-vertical` `16px` muted (shows on hover only), category icon (Tabler icon matching the stored icon name) `18px` green, category name `14px` weight `500`, Arabic name muted `12px` in parentheses, listing count badge (e.g. "42 listings") gray `12px`, right side: active toggle switch, "Add Sub" text button `12px` green, edit icon `ti-edit` muted (shows on hover), delete icon `ti-trash` muted red (shows on hover, disabled and grayed if listing_count > 0 with tooltip "Has listings").
+
+**Level 2 Subcategory rows** (indented `32px` from left): `40px` height, same structure but smaller icons `16px`, no gender indicator, "Add Sub" button only shown if depth is still < 3. Name `13px`.
+
+**Level 3 sub-subcategory rows** (indented `64px`): `36px` height, smallest, no "Add Sub" button (max depth reached).
+
+**Drag to reorder**: drag handle is the only draggable target. Can only drag within the same parent. While dragging: dragged row shows `0.95` opacity, a `2px` green horizontal line appears between rows as a drop indicator showing where it will land. On drop: call `POST /inventory/categories/reorder` with updated sort_orders. Optimistic update in UI — if API fails revert to previous order and show error toast.
+
+**Inline edit**: clicking the `ti-edit` icon on any row turns the name text into an input field inline. Arabic name also becomes editable inline next to it. A save checkmark `ti-check` green and cancel `ti-x` gray appear replacing the edit icon. Pressing Enter saves. Pressing Escape cancels. PUT request fires on save. If slug needs to change it is auto-generated from new name and sent in body.
+
+---
+
+### Add Category Modal
+
+shadcn/ui Dialog `480px` wide. Title "Add Category" or "Add Subcategory" (depends on where Add was clicked).
+
+Fields top to bottom:
+- Gender — Select (Male / Female / Unisex). Pre-filled and disabled if adding subcategory to a gendered parent.
+- Parent Category — Select dropdown showing existing level 1 categories filtered by gender. Shows "None (root category)" as first option. Pre-filled if adding via "Add Sub" button.
+- Category Name (English) — text input required
+- Category Name (Arabic) — text input required with `dir="rtl"`
+- Slug — text input auto-populated from English name (lowercase, hyphens, no spaces), editable. Shows validation error if slug already exists.
+- Icon — icon picker: text input to search Tabler icon names, results show as a grid of icons `24px` each, clicking selects. Selected icon shown with green background in grid.
+- Sort Order — number input (auto-set to last position + 1, editable)
+
+Cancel and Create Category buttons. Create calls POST, on success adds to tree with fade-in, closes modal.
+
+---
+
+## Tab 3 — Tailor Plans
+
+---
+
+### Plan Cards
+
+Three cards in a row. Each `1fr`. On screens below `900px` stacks vertically.
+
+**Basic Plan card**: white background `1px` `#E5E7EB` border `12px` radius padding `24px`.
+- Plan name "Basic" `20px` weight `600` `#111827`
+- Price "Free" `32px` weight `700` `#2D7A2D`
+- Active tailors count: `{N} tailors` in `14px` muted with a green dot indicator
+- Divider `1px`
+- Feature list: each feature as a row with `ti-check` `16px` `#2D7A2D` for included, `ti-x` `16px` `#9CA3AF` for not included. Feature label `14px`. Features: Max Active Listings (show count), Commission Rate (show %), Featured Slots (show count or "None"), Priority Disputes, Verified Badge, Female Customer Access.
+- Edit Plan button: outlined `#2D7A2D` border green text, full width, at bottom of card.
+
+**Professional Plan card**: same structure. Amber accent instead of green for price color `#D97706`. Recommended badge above card name: small pill "Most Popular" amber background amber text.
+
+**Premium Plan card**: gold accent `#B8860B` for price. "Best Value" pill above name.
+
+---
+
+### Edit Plan Drawer
+
+Slides from right `480px`. Title "Edit {Plan Name} Plan".
+
+Fields:
+- Plan Name (English) — text input
+- Plan Name (Arabic) — text input with `dir="rtl"`
+- Monthly Price (AED) — number input converts to fils. Shows "Free (0)" for Basic.
+- Annual Price (AED) — number input. Below this auto-calculates and shows "Saves AED X vs monthly (X% off)" in green if annual < monthly × 12.
+- Commission Rate (%) — number input `0–100`, step `0.5`. Helper text "Platform takes this percentage from each order".
+- Max Active Listings — number input. Checkbox next to it "Unlimited" — if checked disables the input and sends null.
+- Max Portfolio Images — number input.
+- Max Featured Slots — number input (0 for Basic).
+- Feature toggles — shadcn/ui Switch per feature: Can Feature Listings, Priority Dispute Handling, Verified Badge Display, Female Customer Eligible. Each toggle has a helper description below in `12px` muted.
+
+Warning banner inside drawer: "Changes apply to new subscriptions only. Existing subscribers keep their current terms until renewal."
+
+Save and Cancel buttons in fixed footer.
+
+---
+
+### Plan Distribution Chart
+
+Below the three plan cards. White card full width `1px` border `10px` radius padding `24px`. Two columns:
+
+Left: Recharts PieChart donut `260px` height. Three segments one per plan. Colors: Basic gray, Professional amber, Premium gold. Center label shows total active tailors count. Custom HTML legend below: three rows showing colored square, plan name, tailor count, percentage, MRR contribution.
+
+Right: MRR breakdown stat cards stacked. Total MRR large `24px` green. Then per-plan breakdown: plan name, monthly subscribers count × monthly price, annual subscribers count × annual price ÷ 12, combined MRR. All in AED. Below that ARR (Annual Recurring Revenue) = MRR × 12.
+
+---
+
+## Tab 4 — Size Management
+
+---
+
+### Two panels stacked vertically
+
+---
+
+### Panel 1 — Standard Sizes
+
+White card `1px` border `10px` radius. Header: "Standard Sizes" `16px` weight `500` left. "Add Size" button right.
+
+TanStack Table with inline editing. Columns:
+
+**Sort Order**: drag handle `ti-grip-vertical` for reorder. Number shows current sort order.
+
+**Size Label**: text input always editable inline (not behind an edit button — the table is a direct editing interface). XS, S, M, L, XL, XXL, XXXL as defaults.
+
+**Chest (cm)**: two inputs side by side "Min" and "Max" with a dash between. `60px` wide each.
+
+**Waist (cm)**: same min/max pair.
+
+**Hips (cm)**: same min/max pair.
+
+**Description**: text input `200px`.
+
+**Active**: Switch toggle.
+
+**Delete**: `ti-trash` icon muted red. Disabled with tooltip if any listing variant references this size.
+
+Changes auto-save on field blur with a PUT request. A small "Saved" indicator appears briefly in the row on success. Error shows inline below the field.
+
+"Add Size" button appends a new empty row at bottom of table with focus on the Label field.
+
+**Size Guide Images** section below table: two upload cards side by side — Male Size Guide and Female Size Guide. Each card `200px × 140px`: if image uploaded shows preview with Replace button. If no image shows `ti-upload` icon with "Upload size guide" label and a Click to Upload button. Clicking calls `POST /uploads/sign`, uploads, confirms, then `POST /inventory/size-guides`. Image should be a clear sizing chart graphic. After upload shows the image as a preview with a Remove button.
+
+---
+
+### Panel 2 — Measurement Fields
+
+White card `1px` border `10px` radius. Header: "Measurement Fields" `16px` weight `500` left. Subtitle "Configure what customers fill in when ordering custom stitch" `13px` muted.
+
+**Organized by body group**: four collapsible sections — Upper Body, Mid Body, Lower Body, General. Each section header `40px` height `#F9FAFB` background with group label and field count badge. Collapsible.
+
+**Each field row** inside sections: drag handle for reorder within group. Field name English input `160px`. Field name Arabic input `160px` with `dir="rtl"`. Unit badge (cm or kg) — click to toggle between the two. Required toggle Switch. Description text input `240px` (shown to customers as helper text). Delete button `ti-trash` — disabled if any measurement_profiles have values in this field (shows count tooltip).
+
+"Add Field" button at bottom of each group section adds a new row at the end of that group.
+
+**Global Save button** at very bottom of the panel — green, full width, `"Save Measurement Configuration"`. All field changes are held in local state until this button is pressed. This prevents partial saves when rearranging many fields. On click sends `PUT /inventory/measurement-fields` with full replacement array. Success toast. Error shows which fields failed validation.
+
+---
+
+## State Management
+
+```typescript
+// Tab state from URL
+const [searchParams, setSearchParams] = useSearchParams()
+const activeTab = searchParams.get('tab') ?? 'materials'
+const setActiveTab = (tab: string) => setSearchParams({ tab })
+
+// Materials filters — all in one object
+const [filters, setFilters] = useState<MaterialFilters>({
+  search: '',
+  material_types: [],
+  quality_tiers: [],
+  gender: null,
+  colors: [],
+  in_stock: false,
+  is_active: true,
+  price_min: null,
+  price_max: null,
+  sort: 'created_desc',
+})
+
+// View toggle
+const [viewMode, setViewMode] = useState<'grid' | 'table'>('grid')
+
+// Drawer state
+const [drawerOpen, setDrawerOpen] = useState(false)
+const [editingMaterial, setEditingMaterial] = useState<Material | null>(null)
+// null = add mode, Material object = edit mode
+
+// TanStack Query
+const { data: materialsData, isLoading } = useQuery({
+  queryKey: ['materials', filters],
+  queryFn: () => apiClient.get('/inventory/materials', { params: flattenFilters(filters) }),
+  staleTime: 2 * 60 * 1000,
+  keepPreviousData: true, // keeps old data visible while new page loads
+})
+
+// Mutations
+const createMaterial = useMutation({
+  mutationFn: (data) => apiClient.post('/inventory/materials', data),
+  onSuccess: () => {
+    queryClient.invalidateQueries({ queryKey: ['materials'] })
+    setDrawerOpen(false)
+    toast.success('Material created successfully')
+  },
+  onError: (error) => toast.error(error.message),
+})
+
+const updateMaterial = useMutation({
+  mutationFn: ({ id, data }) => apiClient.put(`/inventory/materials/${id}`, data),
+  onMutate: async ({ id, data }) => {
+    // Optimistic update
+    await queryClient.cancelQueries({ queryKey: ['materials'] })
+    const previous = queryClient.getQueryData(['materials', filters])
+    queryClient.setQueryData(['materials', filters], (old) => ({
+      ...old,
+      data: old.data.map(m => m.id === id ? { ...m, ...data } : m)
+    }))
+    return { previous }
+  },
+  onError: (err, vars, context) => {
+    queryClient.setQueryData(['materials', filters], context.previous)
+    toast.error('Failed to update material')
+  },
+  onSettled: () => queryClient.invalidateQueries({ queryKey: ['materials'] }),
+})
+
+// Category tree — local state for drag reorder
+const [categoryTree, setCategoryTree] = useState<CategoryTree[]>([])
+// Populated from GET /inventory/categories, then managed locally with optimistic updates
+
+// Size management — hold all changes locally until global save
+const [measurementFields, setMeasurementFields] = useState<MeasurementField[]>([])
+const [isDirty, setIsDirty] = useState(false) // true if unsaved changes exist
+// Show unsaved warning if user tries to change tab with isDirty=true
+```
+
+---
+
+## Security
+
+- POST, PUT, DELETE on materials, categories, plans, sizes — require super_admin or operations_admin role checked in middleware before Edge Function runs
+- GET endpoints — any admin role
+- Plan edits (PUT /inventory/plans/:id) — super_admin only due to financial impact
+- Measurement fields configuration (PUT /inventory/measurement-fields) — super_admin only, validated server-side that no fields with existing data are removed
+- All file_keys in image uploads validated server-side to belong to the authenticated user's upload session before being associated with a material
+- Bulk actions validate that all provided IDs exist and are not deleted before executing — prevents ID fishing attacks
+- Commission rate changes on plans are written to audit_logs with old and new values because they directly affect all future revenue calculations
+- Category slug uniqueness enforced at database level with a unique index in addition to the application-level check

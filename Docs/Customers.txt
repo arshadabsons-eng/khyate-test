@@ -1,0 +1,98 @@
+# Page 7 — Customer Management
+
+Route: `/customers`
+
+---
+
+## What This Page Does
+
+Lists every customer on the platform in a server-side paginated TanStack Table. Admins use this page to review customer accounts, drill into a customer's full history (Customer Detail page), and run support actions: suspend, reinstate, flag for review.
+
+---
+
+## Backend — APIs Required
+
+**GET /customers**
+- Auth: any admin role.
+- Query params: `search` (name, phone, email), `cities` (csv uuid), `min_orders`, `max_orders`, `min_spent_aed`, `max_spent_aed`, `joined_from`, `joined_to`, `flagged` (bool), `status` (active|suspended|all), `page`, `limit`, `sort` (newest|oldest|spent_desc|orders_desc|name_asc).
+- Response: `{ data: CustomerRow[], total, page, limit, total_pages, kpi: { total, new_30d, flagged, suspended } }`.
+- Aggregations from `customer_stats_mv` refreshed every 5 min.
+
+**POST /customers/:id/suspend**
+- Auth: super_admin or operations_admin.
+- Body: `{ reason: string, suspend_active_orders: boolean }`.
+- Sets `customer_profiles.is_active=false`. If `suspend_active_orders=true`, in-progress orders are paused and tailors notified. Audit log + notification.
+
+**POST /customers/:id/reinstate** — sets `is_active=true`, audit, notify.
+
+**POST /customers/:id/flag**
+- Auth: any admin role.
+- Body: `{ reason: enum, note?: string }`.
+- reason enum: `chargeback_history, abuse, fraud_suspected, repeat_disputes, other`.
+- Adds row to `customer_flags` table, sets `customer_profiles.is_flagged=true`. Flagged customers trigger extra fraud checks at order placement.
+
+**POST /customers/:id/unflag** — clears flag, audit log.
+
+**GET /customers/:id/payment-methods**
+- Auth: super_admin or operations_admin.
+- Returns Stripe-managed cards (last 4 + brand only). Never returns full PAN. Each access writes a `pii.view` audit log entry.
+
+---
+
+## Frontend — Page Build
+
+### Header
+
+Title "Customer Management" 22px weight 500.
+
+### KPI strip
+
+Four small cards: Total Customers, New (30 days), Flagged, Suspended. Each with delta vs prior period.
+
+### Search and Filters
+
+Search input 320px (debounced 300ms): name, phone, or email.
+
+Filter panel:
+- City multi-select.
+- Order count range — dual slider 0–100.
+- Total spent range — dual slider in AED, max configurable.
+- Flagged toggle — show flagged customers only.
+- Status — All | Active | Suspended segmented toggle.
+- Join date range picker.
+- Apply / Reset buttons.
+
+### Table
+
+Columns:
+- Checkbox.
+- Avatar + name — 32px circle, name 14px weight 500, masked phone 12px muted below.
+- Phone (full) — only visible to super_admin. Hidden behind a "Reveal" button for operations_admin (writes audit log on click).
+- City.
+- Total orders — number.
+- Total spent — `AED X,XXX`.
+- Status badge — Active / Suspended / Flagged (amber).
+- Joined — relative date.
+- Actions — three-dot menu: View, Suspend, Reinstate, Flag, Unflag, View Payment Methods (super_admin only).
+
+Row click navigates to `/customers/:id`.
+
+### Bulk Action Toolbar
+
+Slides up on selection: Export CSV, Bulk Flag (with shared reason input), Bulk Suspend (super_admin only, with confirmation dialog requiring "SUSPEND" typed). Max 200 ids per action.
+
+---
+
+## State Management
+
+Same pattern as Tailors page (URL-encoded filters, TanStack Query with `keepPreviousData`).
+
+---
+
+## Security
+
+- Phone number masked by default; revealing logs `pii.view`.
+- Email never exposed in the table to support_agent — only super_admin/operations_admin.
+- Payment methods endpoint super_admin only; logs every access.
+- Flag/unflag actions visible to all admins because flagging is a triage action; suspend/reinstate restricted to super_admin and operations_admin.
+- CSV export rate-limited 1/min; export excludes encrypted PII fields.

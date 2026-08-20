@@ -1,0 +1,127 @@
+# Page 18 — Notifications
+
+Route: `/notifications`
+
+---
+
+## What This Page Does
+
+Two tools in one page: a Broadcast Composer for sending platform-wide announcements (with audience targeting and bilingual content), and a Message Center for handling individual support threads with users.
+
+---
+
+## Backend — APIs Required
+
+### Broadcast
+
+**POST /notifications/broadcast/preview**
+- Auth: any admin role.
+- Body: `{ audience_type: 'all_tailors'|'all_customers'|'segment', segment?: { cities?: uuid[], tier_ids?: uuid[], gender?: enum }, channels: ('in_app'|'email')[] }`.
+- Returns `{ recipient_count: number, breakdown: { by_city: [...], by_tier: [...] } }`. No DB writes.
+
+**POST /notifications/broadcast/send**
+- Auth: super_admin or operations_admin.
+- Body: `{ audience_type, segment?, channels, title_en, title_ar, body_en, body_ar, scheduled_for?: ISO }`.
+- If `scheduled_for` provided, the broadcast is queued (Upstash Q or DB queue) and sent at that time. Otherwise sent immediately in batches.
+- Inserts notifications rows in batches of 500. Email channel uses provider (Postmark/Resend) bulk send.
+- Audit log: action `broadcast.send` with audience snapshot, recipient_count, schedule.
+
+**GET /notifications/broadcasts**
+- Auth: any admin role.
+- List of past broadcasts with delivery stats.
+
+### Message Center
+
+**GET /messages/threads**
+- Auth: any admin role.
+- Query: `assigned_to` (me|unassigned|all), `status` (open|closed|all), `search`, `page`, `limit`.
+- Returns paginated threads with last_message preview, unread count, sender info, assigned admin.
+
+**GET /messages/threads/:id** — full thread with all messages.
+
+**POST /messages/threads/:id/reply**
+- Auth: any admin role.
+- Body: `{ content: string, content_ar?: string }`.
+
+**POST /messages/threads/:id/assign**
+- Body: `{ admin_id: uuid }`. Reassigns to specified admin.
+
+**POST /messages/threads/:id/close** — marks thread closed.
+
+---
+
+## Frontend — Page Build
+
+Two tabs: **Broadcast Composer** | **Message Center**.
+
+### Tab: Broadcast Composer
+
+White card full width.
+
+**Audience section**:
+- Audience type radio: All Tailors | All Customers | Segment.
+- When Segment selected, expand additional filters: city multi-select, tier multi-select (for tailors), gender select (for customers).
+- Recipient count badge updates live (debounced 500ms calls `/notifications/broadcast/preview`).
+
+**Channels section**:
+- Checkboxes: In-App, Email. Push (mobile) shown but disabled with note "Mobile app coming soon" until that channel is wired.
+
+**Content section** — bilingual (always required):
+- Title (English) — input.
+- Title (Arabic) — input with RTL.
+- Body (English) — textarea, supports markdown (bold/italic/links). Live counter shows char count.
+- Body (Arabic) — textarea RTL.
+
+**Preview toggle** — switches the content area to a side-by-side card preview showing how it would appear in-app and (if email channel selected) the email client preview.
+
+**Schedule section** (optional) — toggle "Send Now" or "Schedule for Later" + date/time picker.
+
+**Send button** — large green, full width on mobile. Confirmation dialog showing `recipient_count` and channels. After confirm calls `/notifications/broadcast/send` and shows a success toast linking to the broadcast in the history table.
+
+**Recent Broadcasts** — table at the bottom of the tab: title, audience, channels, recipient count, sent_at, status, view button.
+
+### Tab: Message Center
+
+Two-panel layout.
+
+**Left panel — Thread List**: 360px wide. Search input at top. Filters: All / Unread / Assigned to Me / Unassigned. Each thread item shows: avatar, sender name, preview text (truncated), timestamp relative, unread count badge.
+
+**Right panel — Thread Detail**: full thread. Header: sender info, link to their profile, "Assigned to {admin}" pill with reassign select, "Close Thread" button.
+
+Message list scrolls. Bubbles: customer/tailor right-aligned blue, admin left-aligned green.
+
+Reply input at bottom: textarea, optional Arabic textarea, internal-note toggle (for admin notes not shown to user), Send button.
+
+Realtime subscription on `/messages/threads/:id`.
+
+---
+
+## State Management
+
+```ts
+const [audience, setAudience] = useState<AudienceConfig>(defaultAudience)
+const [content, setContent] = useState<NotificationContent>(emptyContent)
+
+const { data: preview } = useQuery({
+  queryKey: ['broadcast', 'preview', audience],
+  queryFn: () => apiClient.post('/notifications/broadcast/preview', audience),
+  enabled: isValidAudience(audience),
+  staleTime: 30 * 1000,
+})
+
+const send = useMutation({
+  mutationFn: (payload) => apiClient.post('/notifications/broadcast/send', payload),
+  onSuccess: () => toast.success(`Sent to ${preview?.recipient_count} recipients`),
+})
+```
+
+---
+
+## Security
+
+- Broadcast send is super_admin or operations_admin only.
+- Title and body fields sanitized server-side via DOMPurify-like step before insert; raw HTML rejected.
+- Audience preview does not write DB; only count + sample breakdown.
+- Audit log per send including audience snapshot for forensic review.
+- Message thread access enforced by RLS — admins see all threads, users see only their own.
+- Rate limiting on broadcast: max 10 broadcasts per day platform-wide; soft limit prompts confirmation when exceeded.

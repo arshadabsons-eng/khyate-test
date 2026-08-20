@@ -1,0 +1,135 @@
+# Page 15 — Revenue
+
+Route: `/revenue`
+
+---
+
+## What This Page Does
+
+Platform revenue dashboard with KPI cards, a breakdown chart, and the commission configuration panel. Period filter at the top of the page applies to all KPIs and the chart simultaneously. Commission config supports global rates by order type, per-tier overrides, and per-tailor overrides with validity windows.
+
+Export buttons at the bottom for CSV/PDF revenue reports and per-tailor earnings statements.
+
+---
+
+## Backend — APIs Required
+
+**GET /revenue/summary**
+- Auth: super_admin or operations_admin.
+- Query: `from`, `to`, `period` (day|week|month|year).
+- Response: `{ gmv_fils, commission_fils, subscription_revenue_fils, promotion_revenue_fils, refunded_commission_fils, net_revenue_fils, prior_period: { same fields }, deltas_pct: { same fields } }`.
+
+**GET /revenue/breakdown**
+- Query: `from`, `to`, `period`.
+- Response: array of `{ date, gmv, commission, readymade_gmv, custom_stitch_gmv, material_gmv }`. generate_series fills empty buckets.
+
+**GET /commission-config**
+- Auth: super_admin only.
+- Response: `{ global: { readymade_pct, custom_stitch_pct, material_pct }, by_tier: [{ tier_id, tier_name, readymade_pct, custom_stitch_pct, material_pct }], overrides: [{ id, tailor_id, tailor_name, order_type, override_rate_pct, valid_from, valid_until, reason }] }`.
+
+**PUT /commission-config/global**
+- Auth: super_admin only.
+- Body: `{ order_type: enum, rate_pct: number }`.
+- Validates 0 ≤ rate ≤ 100. Audit log with old and new.
+
+**PUT /commission-config/tier/:tier_id**
+- Auth: super_admin only.
+- Body: `{ order_type: enum, rate_pct: number }` per row.
+- Audit log per row.
+
+**POST /commission-config/override**
+- Auth: super_admin only.
+- Body: `{ tailor_id, order_type, override_rate_pct, valid_from, valid_until, reason }`.
+- Validates date range, rate range. Inserts row. Audit.
+
+**DELETE /commission-config/override/:id** — removes override. Audit.
+
+**POST /revenue/export**
+- Auth: super_admin or operations_admin.
+- Body: `{ format: 'csv'|'pdf', from, to, type: 'platform'|'per_tailor', tailor_id?: uuid }`.
+- For per-tailor type tailor_id required.
+- Streams the file. Rate limited 5/hour per admin.
+
+---
+
+## Frontend — Page Build
+
+### Header
+
+Title "Revenue" 22px weight 500. Period filter on right: segmented toggle Day | Week | Month | Year + custom date range picker.
+
+### KPI Stat Cards (full row)
+
+Six cards in a `repeat(6, 1fr)` grid (`repeat(3, 1fr)` below 1280px, `repeat(2, 1fr)` below 768px):
+1. GMV
+2. Commission Earned
+3. Subscription Revenue
+4. Promotion Revenue
+5. Refunded Commission (red accent)
+6. Net Revenue
+
+Each card identical to Overview KPI card pattern: label, large number, delta vs prior period (positive green, negative red).
+
+### Revenue Breakdown Chart
+
+White card full width. Title "Revenue Breakdown" + chart-type toggle: Line | Bar.
+
+Recharts ComposedChart 360px height. Lines/bars: GMV (green), Commission (light green), Net Revenue (dark green). Optional per-order-type series (Readymade, Custom Stitch, Material) toggled via legend.
+
+X-axis date format depends on period; Y-axis AED. Custom tooltip.
+
+### Commission Configuration Panel
+
+White card full width. Title "Commission Configuration" + subtitle "Affects all future orders. Existing orders keep the rate at time of placement."
+
+Three sub-sections:
+
+**Global Rates** — three rows for Readymade, Custom Stitch, Material. Each row: label, current rate badge, percent input, save button (per-row save for safety). Helper text "Default rate when no tier or per-tailor override applies."
+
+**Tier Overrides** — table: tier name, readymade %, custom stitch %, material %, save button per row. Inline editing.
+
+**Per-Tailor Overrides** — tailor search input fetching `/tailors/search`. Below the search a table of existing overrides: tailor name (link), order type, rate %, valid from, valid until, reason, edit/delete actions. "Add Override" button opens a modal with the same fields.
+
+### Export Buttons (full row at bottom)
+
+Five buttons:
+- Revenue Report CSV — downloads platform-level CSV.
+- Revenue Report PDF — opens a server-rendered PDF with KPIs + chart screenshot.
+- Per-Tailor Earnings Statement — opens a modal: tailor select + date range + format (CSV|PDF) → downloads.
+- Refund Report CSV — list of refunds in period.
+- Subscription Report CSV — list of subscription renewals/cancellations.
+
+Each button shows a spinner during request, success toast on download.
+
+---
+
+## State Management
+
+```ts
+const [period, setPeriod] = useState<'day'|'week'|'month'|'year'>('month')
+const [range, setRange] = useState<{from: Date, to: Date}>(defaultRange(period))
+
+const { data: summary } = useQuery({
+  queryKey: ['revenue', 'summary', range, period],
+  queryFn: () => apiClient.get('/revenue/summary', { params: { from: range.from, to: range.to, period } }),
+  staleTime: 5 * 60 * 1000,
+})
+
+const { data: breakdown } = useQuery({
+  queryKey: ['revenue', 'breakdown', range, period],
+  queryFn: () => apiClient.get('/revenue/breakdown', { params: { from: range.from, to: range.to, period } }),
+  staleTime: 5 * 60 * 1000,
+})
+```
+
+Commission config edits use optimistic updates with revert-on-error.
+
+---
+
+## Security
+
+- All endpoints super_admin or operations_admin. Commission config write is super_admin only.
+- Commission rate changes audit-logged with old + new values — these affect every future order calculation.
+- Per-tailor overrides validated: valid_from < valid_until (or null), 0 ≤ rate ≤ 100, no overlapping override for same (tailor, order_type) period.
+- Export endpoints rate-limited; CSVs include integer fils + AED-formatted columns; PDFs server-rendered to avoid client-side data exposure.
+- All export downloads write an `export.generate` audit log entry with the format and period range.

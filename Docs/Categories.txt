@@ -1,0 +1,97 @@
+# Page 13 — Categories
+
+Route: `/categories`
+
+---
+
+## What This Page Does
+
+Manages the dress category tree (Gender → Category → Subcategory) used across the platform for browsing, filtering, and listing categorization. Three-level hierarchy with drag-to-reorder within siblings, inline editing, add/edit/delete actions. This is conceptually a sibling of the Inventory page's Categories tab, but lives on its own route for direct access from the sidebar.
+
+> Note: This page surfaces the same data and APIs documented in `Inventory.txt` Tab 2 — Categories. Use this file as the canonical reference for the dedicated `/categories` route. The Inventory tab and this page render the same component.
+
+---
+
+## Backend — APIs Required
+
+See `Inventory.txt` Categories APIs:
+- `GET /inventory/categories?gender=...&include_inactive=...`
+- `POST /inventory/categories`
+- `PUT /inventory/categories/:id`
+- `POST /inventory/categories/reorder`
+- `DELETE /inventory/categories/:id`
+
+---
+
+## Frontend — Page Build
+
+### Header
+
+Title "Categories" 22px weight 500. Subtitle "Organize the platform's dress category tree" muted.
+
+Right side: gender filter toggle (All | Male | Female | Unisex) and "Add Category" button (green).
+
+### Tree Layout
+
+Full-width white card 1px border 10px radius. The tree fills the card edge-to-edge.
+
+**Gender header rows** (3 collapsible sections — Male, Female, Unisex). Header: 48px height `#F9FAFB` background, gender icon 20px green, gender label 15px weight 500, count badge, chevron expand/collapse, "Add Category" text button right-aligned.
+
+**Level 1 categories** (indent 0px): 44px height row. Drag handle (visible on hover), category icon, name (en + ar muted in parens), listing count badge, active toggle, "Add Sub" text button, edit icon, delete icon (disabled if listing_count > 0 with tooltip).
+
+**Level 2 subcategories** (indent 32px): 40px height. Same controls but smaller icons.
+
+**Level 3 sub-subcategories** (indent 64px): 36px height. No "Add Sub" button (max depth).
+
+**Drag to reorder**: only within same parent. Visual ghost on dragged row, 2px green horizontal drop indicator. On drop calls `POST /inventory/categories/reorder`. Optimistic update; reverts on API error.
+
+**Inline edit**: click `ti-edit` icon to make name fields editable inline. Save checkmark and cancel `ti-x` icons replace edit icon. Enter saves, Escape cancels. Slug is auto-regenerated from new English name on save.
+
+### Add Category Modal
+
+shadcn Dialog 480px wide. Title "Add Category" or "Add Subcategory" depending on context.
+
+Fields:
+- Gender select (pre-filled and disabled when adding a child).
+- Parent category select (pre-filled when adding a child via "Add Sub").
+- Name (English) — required.
+- Name (Arabic) — required, RTL.
+- Slug — auto-populated, editable, validates uniqueness on blur.
+- Icon picker — text search Tabler icon names, results render as a 24px grid; selected icon highlighted green.
+- Sort order — number input (default last+1).
+
+Cancel and Create buttons. On success the new node fades into the tree.
+
+---
+
+## State Management
+
+```ts
+const [tree, setTree] = useState<CategoryTree[]>([])
+const [genderFilter, setGenderFilter] = useState<'all'|'male'|'female'|'unisex'>('all')
+
+const { data, isLoading } = useQuery({
+  queryKey: ['categories', genderFilter],
+  queryFn: () => apiClient.get('/inventory/categories', { params: { gender: genderFilter } }),
+})
+
+useEffect(() => { if (data) setTree(data.data) }, [data])
+
+// Optimistic reorder
+const handleReorder = (parentId: string|null, newOrder: string[]) => {
+  setTree(prev => applyReorder(prev, parentId, newOrder))
+  reorderMutation.mutate({ updates: newOrder.map((id, i) => ({ id, sort_order: i })) }, {
+    onError: () => setTree(prev => /* revert */),
+  })
+}
+```
+
+---
+
+## Security
+
+- POST/PUT/DELETE endpoints require super_admin or operations_admin.
+- Delete validates listing_count is 0 for the category and ALL descendants — server-enforced; client check is advisory only.
+- Slug uniqueness enforced at DB level with a unique index in addition to the application check.
+- Audit log per create, update (with old + new), delete, reorder.
+- Max depth enforced at 3 levels server-side; deeper inserts return 400.

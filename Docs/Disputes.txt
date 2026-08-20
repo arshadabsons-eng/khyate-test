@@ -1,0 +1,118 @@
+# Page 11 — Dispute Management
+
+Route: `/disputes`
+
+---
+
+## What This Page Does
+
+Lists every dispute on the platform with a live SLA countdown column. Auto-refreshes every 30 seconds so SLA timers stay current. Drives the support team's daily triage: claiming disputes, communicating with parties, and resolving with refunds, redo orders, warnings, or tailor suspensions.
+
+Below the table is an analytics section: dispute rate per tailor, type breakdown donut, average resolution time, outcome distribution.
+
+---
+
+## Backend — APIs Required
+
+**GET /disputes**
+- Auth: any admin role.
+- Query params: `status` (csv enum, default open), `dispute_type` (csv enum), `assigned_to` (admin id|me|unassigned|all), `sla_breached` (bool), `date_from`, `date_to`, `tailor_id`, `customer_id`, `page`, `limit`, `sort` (sla_asc default|sla_desc|raised_asc|raised_desc).
+- Response: `{ data: DisputeRow[], total, page, limit, total_pages, kpi: { open, awaiting_response, under_review, resolved_today, escalated, breached } }`.
+- Each row includes `time_remaining_seconds` computed from `sla_deadline - now()`. Rows where time_remaining < 0 are marked `breached`.
+
+**POST /disputes/:id/claim** — assign to current admin. Optimistic-lock 409 on race.
+
+**POST /disputes/:id/assign** — super_admin only. Body: `{ admin_id: uuid }`. Reassigns.
+
+**POST /disputes/:id/resolve** — see DisputeDetail.
+
+**GET /disputes/analytics**
+- Auth: super_admin or operations_admin.
+- Query: `from`, `to`.
+- Response: `{ rate_per_tailor: [{ tailor_id, name, dispute_count, order_count, dispute_rate_pct }], type_breakdown: [{ type, count }], avg_resolution_hours, outcome_distribution: [{ outcome, count }] }`.
+
+---
+
+## Frontend — Page Build
+
+### Header
+
+Title "Dispute Management" 22px weight 500. Right side: Refresh button. Auto-refresh indicator (green pulsing dot + "Auto-refreshing every 30s").
+
+### KPI strip
+
+Six small stat cards: Open, Awaiting Response, Under Review, Resolved Today, Escalated, SLA Breached. Breached card has red border when count > 0.
+
+### Status Tabs
+
+Open | Awaiting Tailor Response | Under Review | Resolved | Escalated | All. Each shows a count badge.
+
+### Filters
+
+- Dispute type — multi-select chips (e.g. item_not_received, item_damaged, wrong_item, late_delivery, quality_issue, refund_request, other).
+- Assigned admin — select with options: All, Unassigned, Me, plus one entry per admin.
+- SLA breach toggle — show only breached disputes.
+- Date range picker.
+
+### Table
+
+Columns:
+- Dispute number — link.
+- Order number — link to `/orders/:id`.
+- Customer first name + last initial.
+- Tailor name — link.
+- Type badge.
+- Status badge.
+- Assigned to — admin name with small avatar; "Unassigned" muted if none.
+- SLA Timer — colored countdown:
+  - Green when remaining > 50%.
+  - Amber when remaining 25–50%.
+  - Red when remaining < 25%.
+  - Red flashing when breached, label "BREACHED · Xh Ym ago".
+  - Updates client-side every minute via interval; the row re-renders, no API call.
+- Raised — relative date.
+- Actions — three-dot: View, Claim, Reassign, Resolve.
+
+Row click navigates to `/disputes/:id`.
+
+### Bulk Action Toolbar
+
+On selection: Claim Selected (assigns all to current admin), Reassign Selected (super_admin only with admin select). Max 50 ids.
+
+### Analytics Section (below table)
+
+Full-width section with title "Dispute Analytics". Period filter applying to all charts.
+
+Four charts in a 2x2 grid (responsive):
+1. **Dispute Rate per Tailor** — Recharts horizontal BarChart, top 10 tailors by dispute_rate_pct, bar colored red where rate > platform average. Y-axis tailor names, X-axis percentage.
+2. **Type Breakdown** — donut chart, custom HTML legend with count and percentage per type.
+3. **Average Resolution Time** — large stat card showing hours, delta vs prior period.
+4. **Outcome Distribution** — horizontal bar chart of resolution_action enum counts: Full Refund, Partial Refund, Reject Claim, Require Redo, Warning Issued, Tailor Suspended.
+
+---
+
+## State Management
+
+```ts
+const { data, isLoading } = useQuery({
+  queryKey: ['disputes', filters, statusTab],
+  queryFn: () => apiClient.get('/disputes', { params: { ...flatten(filters), status: statusTab } }),
+  refetchInterval: 30_000,
+})
+
+// SLA timers — re-render every minute without refetching
+useEffect(() => {
+  const t = setInterval(() => setNow(Date.now()), 60_000)
+  return () => clearInterval(t)
+}, [])
+```
+
+---
+
+## Security
+
+- Auto-assign on claim uses a unique partial index `(dispute_id, status='claiming')` to prevent double-claim.
+- Reassignment is super_admin only.
+- Analytics endpoint super_admin/operations_admin only.
+- support_agent can claim and resolve but cannot reassign.
+- Audit log entries written on: claim, reassign, resolve, status change, message-internal-note added.

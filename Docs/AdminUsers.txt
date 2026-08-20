@@ -1,0 +1,107 @@
+# Page 19 — Admin Users
+
+Route: `/admins`
+
+---
+
+## What This Page Does
+
+Manages internal admin team accounts. List all admins, create new ones with role assignment, deactivate accounts, view per-admin audit history. 2FA enforcement and IP allowlist live here.
+
+---
+
+## Backend — APIs Required
+
+**GET /admin/users**
+- Auth: super_admin only.
+- Query: `search`, `role`, `status` (active|deactivated|all), `page`, `limit`.
+- Response: paginated rows with `{ id, full_name, email, role, two_fa_enabled, last_login_at, ip_count, status }`.
+
+**POST /admin/users**
+- Auth: super_admin only.
+- Body: `{ full_name, email, role: enum, temporary_password: string, force_2fa: boolean, allowed_ip_ranges?: string[] }`.
+- role enum: `super_admin, operations_admin, support_agent`.
+- Validates email unique, password meets policy (min 14 chars, mixed case, digit, symbol), all IP CIDRs valid.
+- Inserts profile + admin_profiles rows. Sets `must_change_password=true`.
+- Sends invitation email with temporary password + 2FA setup link (TOTP QR code).
+- Audit.
+
+**PUT /admin/users/:id**
+- Auth: super_admin only.
+- Body: `{ role?, allowed_ip_ranges?, force_2fa? }`.
+- Cannot change own role to a less-privileged one (prevents self-lockout).
+- Audit.
+
+**POST /admin/users/:id/deactivate**
+- Auth: super_admin only.
+- Body: `{ reason: string }`.
+- Cannot deactivate self. Cannot deactivate the last super_admin.
+- Sets `is_active=false`, invalidates all sessions, audit.
+
+**POST /admin/users/:id/reset-2fa**
+- Auth: super_admin only.
+- Forces 2FA re-enrollment on next login. Audit.
+
+**POST /admin/users/:id/reset-password**
+- Auth: super_admin only.
+- Generates a one-time password reset token and emails it to the admin. Audit.
+
+**GET /admin/users/:id/audit**
+- Returns paginated audit_logs filtered to this admin as actor.
+
+---
+
+## Frontend — Page Build
+
+### Header
+
+Title "Admin Users" 22px weight 500. Right side: "Add Admin" button (green).
+
+### KPI strip
+
+Cards: Total Admins, Super Admins, Operations Admins, Support Agents, 2FA Disabled (red if > 0).
+
+### Table
+
+Columns:
+- Avatar + name.
+- Email.
+- Role badge — Super Admin red, Operations Admin amber, Support Agent blue.
+- 2FA — green check / red x.
+- Last Login — relative date.
+- IP Restrictions — count badge with hover tooltip listing CIDRs.
+- Status badge.
+- Actions — three-dot: Edit, Deactivate (with confirm), Reset 2FA, Reset Password, View Audit.
+
+Row click expands inline drawer below the row showing the most recent 10 audit entries by this admin with a "View All" link to the full audit page filtered to this admin.
+
+### Add Admin Modal
+
+shadcn Dialog 480px:
+- Email input.
+- Full name input.
+- Role select.
+- Temporary password input with strength meter, "Generate" button.
+- 2FA enforcement toggle (default on).
+- IP Allowlist — repeating CIDR input, each row validated client-side.
+- Create button. On success the new admin is emailed.
+
+### Deactivate Confirmation
+
+Dialog requires typing the admin's full name to enable the Confirm button. Shows the consequences: sessions invalidated, login disabled, audit history retained.
+
+### Per-Admin Audit Drawer
+
+Right drawer 480px showing the full audit_logs filtered to that admin as actor: action, entity, timestamp, IP, user_agent. Sortable, searchable.
+
+---
+
+## Security
+
+- Entire page super_admin only at API and route level.
+- Cannot self-deactivate or self-demote (server returns 400).
+- Cannot deactivate the last active super_admin.
+- 2FA reset requires the admin to re-enroll on next login — old TOTP secret invalidated immediately.
+- IP allowlist edits take effect on next login; existing sessions are NOT invalidated to avoid kicking the editing super_admin out mid-session.
+- Audit logs: every create, edit, deactivate, reset action with old + new value snapshots.
+- Temporary passwords never stored in plain text — bcrypt hashed; emailed once and never recoverable.

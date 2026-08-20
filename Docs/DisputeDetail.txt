@@ -1,0 +1,114 @@
+# Page 12 — Dispute Detail
+
+Route: `/disputes/:id`
+
+---
+
+## What This Page Does
+
+Full single-dispute view. Two-column evidence layout (customer left, tailor right), threaded message panel with internal-note toggle, and a resolution action panel at the bottom. The page subscribes via Supabase Realtime to `dispute_messages` so messages from either party appear instantly.
+
+---
+
+## Backend — APIs Required
+
+**GET /disputes/:id**
+- Auth: any admin role.
+- Returns full dispute: customer claim text, customer evidence (file_keys + signed URLs), tailor response text + tailor evidence, status_history, assigned admin, SLA deadline, related order link.
+
+**GET /disputes/:id/messages**
+- Returns `dispute_messages` ordered ascending. Each message has `sender_id`, `sender_role`, `content`, `is_internal`, `created_at`. is_internal rows visible to admins only via RLS.
+
+**POST /disputes/:id/messages**
+- Body: `{ content: string, is_internal: boolean }`.
+- support_agent and above can post regular messages and internal notes.
+
+**POST /disputes/:id/resolve**
+- Auth: super_admin or operations_admin.
+- Body: `{ action: enum, refund_amount_fils?: integer, resolution_note: string, suspend_tailor_reason?: string }`.
+- action enum: `full_refund_to_customer, partial_refund, reject_claim, require_redo, issue_warning_to_tailor, suspend_tailor`.
+- Validates action-specific fields (refund actions require amount, suspend action requires reason).
+- For refund actions: calls Stripe Refund and updates payment_status.
+- For suspend_tailor: also calls `/tailors/:id/suspend` internally with the dispute resolution note.
+- For require_redo: order returns to `in_progress` with a flagged note; tailor is required to redo at no extra charge with a hard deadline.
+- Sets `disputes.status='resolved'`, stores `resolution_action` and `resolution_note`, sends notifications to both parties, audit log with full snapshot.
+
+**POST /disputes/:id/escalate**
+- Auth: super_admin or operations_admin.
+- Body: `{ note: string }`.
+- Sets `status='escalated'`, increases SLA by 24h, reassigns to a senior super_admin from a configurable list.
+
+---
+
+## Frontend — Page Build
+
+### Header
+
+Dispute number, status badge, dispute type chip, raised date, SLA timer (same color logic as Disputes page).
+
+Right side: assigned-to admin pill with avatar; "Claim" button if unassigned; "Reassign" button (super_admin) opens a select with admin list.
+
+### Two-Column Evidence Panel
+
+**Left column — Customer Evidence**
+
+White card. Header: "Customer Claim" with customer name and link.
+- Claim text (textarea-style readonly display, supports paragraph breaks).
+- Evidence images grid (4 cols) with click-to-lightbox.
+- Linked order summary card at bottom: order number, total, status, link.
+
+**Right column — Tailor Response**
+
+White card. Header: "Tailor Response" with tailor name and link.
+- If response exists: response text + tailor evidence images grid.
+- If response NOT yet provided: empty state with `ti-clock` icon, text "Awaiting tailor response", time-remaining countdown until deadline.
+
+Below the two columns: a thin status_history timeline showing every status transition with actor, timestamp, note.
+
+### Message Thread
+
+Full-width panel below evidence. Header: "Messages" with toggle: All Messages | Internal Notes Only.
+
+Each message row:
+- Avatar 32px, sender name + role badge, timestamp.
+- Content in a chat bubble. Customer right-aligned blue, tailor left-aligned gray, admin left-aligned green. Internal notes have an amber left border and "Internal" pill, and are not shown to customer or tailor.
+
+Reply input at bottom: textarea, "Internal note" checkbox (when checked the bubble preview switches to amber), "Send" button.
+
+Realtime subscription: new messages appear with a fade-in slide-down animation.
+
+### Resolution Panel (full width, sticky at bottom)
+
+When status is open/awaiting_response/under_review:
+
+- Action select — radio group of action enum values, each with a short descriptor.
+- Conditional fields below the select:
+  - Refund actions show an amount input (defaults to full payment for full_refund) and a tailor commission reversal preview.
+  - Suspend tailor action shows a textarea for the suspend reason (reused as the tailor block_reason).
+  - Require redo action shows a deadline date input (default +14 days).
+- Resolution note textarea (required, min 20 chars) — visible to both parties.
+- Internal note textarea (optional) — admin-only.
+- "Confirm Resolution" button (green), enabled only when required fields are valid.
+
+After resolution: panel is replaced by a summary banner showing the resolution_action, refund amount if any, resolved-by admin, resolved-at timestamp, and a "View Audit" link expanding the full audit log entry.
+
+### Escalate Button
+
+Top-right of the page. super_admin and operations_admin only. Opens a modal with note input and confirms.
+
+---
+
+## Realtime
+
+Subscribe to `dispute_messages` channel filtered to `dispute_id=:id`. Subscribe to `dispute_status_history` to update status badges if another admin resolves/escalates while you're on the page. RLS handles authorization.
+
+---
+
+## Security
+
+- Internal notes (`is_internal=true`) protected by RLS — never delivered to non-admin subscribers via Realtime.
+- Refund amount must be ≤ total paid less prior refunds — server enforces.
+- Suspend action triggers tailor block + cancels in-progress orders if reason matches a hard violation list.
+- Audit log entry per resolve, escalate, message-internal-note insert.
+- Reassign restricted to super_admin.
+- support_agent can resolve only `reject_claim` and `partial_refund` up to a configurable cap (default AED 500); larger refunds and suspend actions require operations_admin or super_admin.

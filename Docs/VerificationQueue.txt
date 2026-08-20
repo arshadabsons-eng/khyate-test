@@ -1,0 +1,132 @@
+# Page 6 — Verification Queue
+
+Route: `/verification`
+
+---
+
+## What This Page Does
+
+Focused workflow page for reviewing pending tailor account verifications. Two-panel layout: left panel is the queue list ordered by submission date oldest-first (FIFO fairness); right panel shows the selected tailor's documents inline with one-click Approve and Reject. Optimized for high-throughput review — keyboard shortcuts, auto-advance to next item after a decision.
+
+Only admins with `super_admin` or `operations_admin` role can take action on this page. `support_agent` can view but cannot approve or reject.
+
+---
+
+## Backend — APIs Required
+
+**GET /verification/queue**
+- Auth: any admin role.
+- Query params: `status` (pending|under_review|all_open default all_open), `assigned_to` (admin id|me|unassigned|all), `cursor`.
+- Response: `{ data: [{ tailor_id, name, business_name, city, submitted_at, days_in_queue, document_count, assigned_to, has_red_flags }], next_cursor }`.
+- Sort: oldest submission first. Tailors with red flags (e.g. duplicate phone/national_id from prior rejected applications) bubble to top under a "Flagged" sub-header.
+
+**GET /verification/:tailor_id**
+- Auth: any admin role.
+- Returns full profile for the right panel: profile fields, all `verification_documents` rows with signed URLs, prior rejection history if any, similar-tailor warnings.
+
+**POST /verification/:tailor_id/claim**
+- Auth: super_admin or operations_admin.
+- Sets `verification_documents.assigned_to=me` for all docs in this submission. Prevents two admins from reviewing the same submission simultaneously. Optimistic lock — returns 409 if another admin already claimed.
+
+**POST /verification/:tailor_id/approve**
+- Auth: super_admin or operations_admin.
+- Body: `{ tier_id?: uuid, note?: string }`.
+- Validates ALL required document types present and approved.
+- Sets `tailor_profiles.verification_status='verified'`, `is_verified=true`, `verified_at=now()`.
+- Creates default `tailor_subscriptions` row at Basic tier unless `tier_id` provided.
+- Sends notification to tailor (in-app + email) with welcome content.
+- Writes audit log.
+
+**POST /verification/:tailor_id/reject**
+- Auth: super_admin or operations_admin.
+- Body: `{ reason_code: enum, custom_text?: string, can_resubmit: boolean }`.
+- reason_code enum: `documents_unclear, identity_mismatch, business_not_eligible, suspected_fraud, duplicate_account, other`.
+- Sets `verification_status='rejected'`, stores reason. If `can_resubmit=true` the tailor can update documents and resubmit; if false the account is locked.
+- Sends notification with reason and next steps.
+- Writes audit log.
+
+**POST /verification/documents/:doc_id/approve** / **/reject** — same as Tailor Detail page.
+
+---
+
+## Frontend — Page Build
+
+### Layout
+
+Full-width split: left panel 360px fixed, right panel fills remaining width. Below 1024px the layout collapses to a single column with a back button on the right panel returning to the list.
+
+### Header
+
+Title "Verification Queue" 22px weight 500. Right side: filter chips (All Open, Pending, Under Review, Assigned to Me, Flagged), each shows a count badge.
+
+### Left Panel — Queue List
+
+Vertical scrollable list. Each item card: 88px height, padding 12px 16px, 1px bottom border. Layout: avatar + name top, business name + city muted below, "{N} docs · submitted Xd ago" footer in 12px muted. Right side: status pill, days-in-queue badge (green if <2d, amber if 2–4d, red if >4d).
+
+Selected item: 4px green left border, slight `#F9FAFB` background.
+
+Top of list: a "Pick Next" button auto-selects the oldest unclaimed item and claims it for the current admin.
+
+Keyboard shortcuts visible in a small help tooltip:
+- `J` next item, `K` previous item.
+- `A` approve current, `R` reject current.
+- `Space` open the focused document in fullscreen viewer.
+
+### Right Panel — Selected Tailor
+
+**Header strip**: avatar 48px, name + business name, city, submitted date, days-in-queue badge, "Claim" button if not yet claimed by anyone, "Assigned to {admin}" pill when claimed.
+
+**Profile summary card**: read-only fields — full name, phone (verified badge), email, business name, business address, city, specializations chips, gender served pill, bio (en + ar).
+
+**Red flag panel** (if any): amber-bordered card listing automated checks that fired — duplicate phone match, national ID match against a prior rejected account, distance to known-bad signals. Each flag has a "View details" link.
+
+**Documents section**: vertical stack, one card per document. Each card:
+- Document type label and required-tag if it is a required document for this tailor type.
+- Inline viewer (image or PDF) with zoom and rotate controls. PDFs render via `react-pdf` showing all pages with thumbnail strip.
+- Below the viewer: status pill, reviewed-by line if reviewed.
+- Approve and Reject buttons. Reject opens a modal with reason template select + optional custom text. Both actions update the card status inline and play a brief check animation.
+
+**Bottom action bar** (fixed at bottom of right panel): "Approve Verification" button (green, full-width on mobile, right-aligned on desktop), enabled only when ALL required documents are approved. "Reject Verification" button (red outline) opens the rejection modal.
+
+After the admin approves or rejects: a success toast appears, the queue list automatically removes the item and selects the next one in queue. If no more items, shows an empty state "Queue empty — nice work."
+
+### Empty States
+
+- Queue empty: centered illustration with `ti-checks` icon, text "No tailors awaiting verification right now."
+- Queue empty for current filter: text "No tailors match this filter."
+
+---
+
+## State Management
+
+```ts
+const [filter, setFilter] = useState<'all_open'|'pending'|'under_review'|'me'|'flagged'>('all_open')
+const [selectedId, setSelectedId] = useState<string|null>(null)
+
+const { data: queue } = useInfiniteQuery({
+  queryKey: ['verification', 'queue', filter],
+  queryFn: ({ pageParam }) => apiClient.get('/verification/queue', { params: { status: filter, cursor: pageParam } }),
+  getNextPageParam: (last) => last.next_cursor,
+  refetchInterval: 60_000, // keep queue fresh as items move through
+})
+
+const { data: detail } = useQuery({
+  queryKey: ['verification', selectedId],
+  queryFn: () => apiClient.get(`/verification/${selectedId}`),
+  enabled: !!selectedId,
+})
+```
+
+After approve/reject mutations: invalidate the queue, advance `selectedId` to next item from the cached list.
+
+---
+
+## Security
+
+- Both list and detail filtered by RLS: only admin roles can read `verification_documents`.
+- `claim` enforces single-admin review via DB unique index on `(tailor_id, assigned_to_pending)` — prevents race.
+- Document URLs are time-limited signed URLs (1 hour). Refreshed if user dwells longer.
+- Approval requires all required documents to be in `approved` state — server-side check, not client-trusted.
+- Rejection reason `suspected_fraud` triggers a separate workflow: account is locked, tailor is added to a watchlist, and the rejection is reviewed by super_admin within 7 days.
+- All actions audited with full snapshots (old + new state).
+- support_agent role: API returns 403 on any approve/reject; UI hides the buttons.

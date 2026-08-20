@@ -1,0 +1,124 @@
+# Page 9 — Order Management
+
+Route: `/orders`
+
+---
+
+## What This Page Does
+
+Lists every order across the platform with color-coded status tabs and rich filters. Drives admin oversight: spotting stuck orders, investigating customer complaints, initiating refunds, and force-cancelling problem orders. The page auto-refreshes every 60 seconds when on the "Pending" or "In Progress" tabs.
+
+---
+
+## Backend — APIs Required
+
+**GET /orders**
+- Auth: any admin role.
+- Query params: `status` (csv enum, default all), `order_type` (csv enum), `date_from`, `date_to`, `tailor_id`, `customer_id`, `value_min_fils`, `value_max_fils`, `payment_status` (csv enum), `flagged` (bool), `page`, `limit`, `sort` (newest|oldest|value_desc|sla_breach_first).
+- Response: `{ data: OrderRow[], total, page, limit, total_pages, kpi_by_status: { pending, confirmed, in_progress, ready, delivered, completed, cancelled, refunded } }`.
+- Each row excludes commission_fils for support_agent role (use `orders_view` which strips it for non-super-admins/operations-admins).
+
+**GET /orders/:id** — full order detail (covered in OrderDetail.txt).
+
+**POST /orders/:id/refund**
+- Auth: super_admin or operations_admin.
+- Body: `{ amount_fils: integer, reason: string, refund_type: 'full'|'partial' }`.
+- Validates `amount_fils ≤ payments.amount_fils - already_refunded`.
+- Calls Stripe Refund API, inserts `refunds` row, updates `orders.payment_status` accordingly.
+- Trigger on refunds table updates `tailor_balances` to reverse commission proportionally.
+- Audit log with old + new payment_status.
+
+**POST /orders/:id/force-cancel**
+- Auth: super_admin only.
+- Body: `{ reason: string, refund_full: boolean }`.
+- Sets order to `cancelled`, optionally triggers full refund. Notifies both tailor and customer with explanation.
+
+**POST /orders/:id/escalate**
+- Auth: any admin role.
+- Body: `{ dispute_type: enum, description: string }`.
+- Creates a dispute on behalf of the customer when they have not done so themselves but admin sees a problem (e.g. delivery never made). Audit log.
+
+**POST /orders/:id/admin-note**
+- Auth: any admin role.
+- Body: `{ note: string }`.
+- Upserts `orders.admin_notes`. Auto-saves on blur from the order detail page.
+
+**POST /orders/:id/mark-delivered**
+- Auth: super_admin or operations_admin.
+- Forces status to `delivered` from `shipped` when tailor failed to update. Notifies customer; starts 7-day auto-complete timer.
+
+---
+
+## Frontend — Page Build
+
+### Header
+
+Title "Order Management" 22px weight 500. Right side: Refresh button with `ti-refresh` (manual refetch). Auto-refresh indicator when on Pending/In Progress tabs (small green pulsing dot + "Auto-refreshing every 60s").
+
+### Status Tabs
+
+Horizontal tab row across the top. Tabs: All | Pending | Confirmed | In Progress | Ready | Delivered | Completed | Cancelled | Refunded. Each tab shows a count badge sourced from `kpi_by_status`. Active tab has 2px green bottom border. Each status has a fixed color used consistently across the table:
+- Pending — amber
+- Confirmed — blue
+- In Progress — green
+- Ready — cyan
+- Delivered — light green
+- Completed — green
+- Cancelled — gray
+- Refunded — red
+
+### Filters
+
+Filter button right of tabs reveals a panel with:
+- Order type — multi-select chips: Readymade, Custom Stitch, Material.
+- Date range picker.
+- Tailor search — async select fetching from `/tailors/search`.
+- Customer search — async select fetching from `/customers/search`.
+- Value range — dual slider in AED.
+- Payment status — multi-select chips: unpaid, deposit_paid, fully_paid, refunded, partially_refunded.
+- SLA flag — show only orders breached or near-breaching SLA toggle.
+- Apply / Reset.
+
+### Table
+
+Columns:
+- Order number — link to detail.
+- Customer — first name + last initial only.
+- Tailor — name with link icon to tailor detail.
+- Type badge.
+- Total — `AED X,XXX`, right-aligned.
+- Commission — `AED X,XXX` (super_admin/operations_admin only).
+- Status badge.
+- Payment badge.
+- Created — relative date.
+- Days in current status — number, red if > stage SLA threshold.
+- Actions — three-dot: View, Refund, Force Cancel (super_admin only), Escalate to Dispute, Add Note.
+
+Row click navigates to `/orders/:id`. Hovering shifts background.
+
+### Bulk Action Toolbar
+
+Slides up on selection. Actions: Export CSV, Force Cancel Selected (super_admin only with strict typed-confirmation), Escalate Selected. Max 100 ids per action.
+
+---
+
+## State Management
+
+```ts
+const { data, isLoading } = useQuery({
+  queryKey: ['orders', filters, statusTab],
+  queryFn: () => apiClient.get('/orders', { params: { ...flatten(filters), status: statusTab } }),
+  refetchInterval: ['pending', 'in_progress'].includes(statusTab) ? 60_000 : false,
+  keepPreviousData: true,
+})
+```
+
+---
+
+## Security
+
+- `commission_fils` excluded from API response and table for support_agent via `orders_view`.
+- Refund mutations rate-limited 30/min per admin to prevent runaway scripts.
+- Force cancel requires double-confirmation typing the order number.
+- Force cancel and refund both trigger immediate notifications to customer and tailor.
+- Every refund is audited with full pre/post payment_status snapshot.

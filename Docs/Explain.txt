@@ -1,0 +1,418 @@
+Build a full **Admin Dashboard** for **Khyate**, an Arabic-English tailor marketplace. Use **React + TypeScript + Vite + Tailwind CSS + shadcn/ui + Recharts + TanStack Table**. Brand primary color is `#2D7A2D` (green) with white backgrounds. Use Tabler icons throughout. All monetary values display in AED.
+
+---
+
+## Design System
+
+Primary green: `#2D7A2D` | Light green surface: `#E8F5E9` | Dark green: `#1B5E20` | White page background | Sidebar background in `#2D7A2D` with white text and icons | Status badges: green for active/success, amber for pending/warning, red for danger/blocked/failed, blue for info | All tables built with TanStack Table with sort, filter, pagination, row selection, and bulk action toolbar | All destructive actions behind a confirmation dialog | All loading states use skeleton loaders | All empty states show an icon with a helpful message | All forms show inline validation errors | Monetary values formatted as AED X,XXX.XX | Dates formatted as DD MMM YYYY
+
+---
+
+## Layout
+
+Fixed left sidebar `220px` wide with Khyate logo at top, nav items with Tabler icons, active item has white left border accent and light white background, bottom shows logged-in admin name and role. Topbar shows current page title, notification bell icon with unread count badge and dropdown showing last 5 notifications, admin avatar with dropdown showing profile and logout. Main content area is scrollable with breadcrumb below topbar.
+
+---
+
+## Auth Pages
+
+**Login page**: centered card with Khyate logo, email input, password input with show/hide toggle, sign in button
+
+**TOTP Verification page**: shown immediately after successful login before any dashboard route is accessible, centered card with instruction text, 6-digit OTP input with auto-advance between boxes, verify button, back to login link
+
+---
+
+## Sidebar Navigation Items
+
+Overview | Tailors | Verification Queue | Customers | Orders | Disputes | Inventory | Categories | Reviews | Revenue | Payouts | Promotions | Notifications | Admin Users | Settings
+
+---
+
+## Overview Page
+
+Four-column grid of 8 KPI stat cards — Active Tailors, Total Customers, Orders Today, GMV Today, Platform Revenue Today, Open Disputes, Pending Verifications, Pending Listing Reviews — each card shows the metric label, large number value, and a delta vs yesterday in green if positive or red if negative.
+
+Below the stat cards: Revenue Over Time line chart using Recharts with day/week/month/year toggle buttons, showing last 12 months of data with a dashed line for the 90-day projected forecast segment.
+
+Below the chart: two columns. Left column shows Order Type breakdown as a donut chart (Readymade, Custom Stitch, Material Purchase) with a custom HTML legend showing count and percentage. Right column shows Top 10 Tailors by GMV this month as a compact table with avatar, name, city, GMV, and rating.
+
+Below that: Live Activity Feed panel showing last 20 platform events (new tailor verified, order placed, dispute opened, payout processed) with an icon per event type, description, and relative timestamp. New events prepend to the top with a subtle fade-in animation.
+
+---
+
+## Tailor Management Page
+
+Full-width TanStack Table with server-side pagination. Search input at top. Filter panel slide-out button revealing: verification status multi-select, subscription tier multi-select, city multi-select, rating range slider, join date range picker, status toggle (active/inactive/blocked). Columns: checkbox, avatar+name, phone, city, tier badge, total orders, GMV, rating stars, status badge, join date, actions menu (View, Suspend, Message). When rows selected a bulk action toolbar slides in at bottom: Export CSV, Bulk Activate, Bulk Deactivate, Change Tier modal.
+
+Clicking a row navigates to **Tailor Detail page** with the following tabs:
+
+**Overview tab**: all profile fields in two columns, portfolio image grid (click to lightbox), action buttons row: Approve (green), Reject (red, requires reason modal), Suspend (amber, requires reason), Reinstate, Change Tier (modal with tier select), Send Message
+
+**Orders tab**: TanStack Table of this tailor's orders with status, amount, date, link to order detail
+
+**Listings tab**: table of this tailor's listings with status badge, type, price, approve and reject actions inline
+
+**Reviews tab**: list of reviews received with rating stars, customer masked name, date, review text, moderate button
+
+**Earnings tab**: earnings over time Recharts line chart, per-order earnings table showing subtotal, commission rate, commission amount, net, payout history table with status badges
+
+**Documents tab**: document viewer showing uploaded files as images or PDF embed, Approve button, Reject button opening modal requiring rejection reason selected from template list with optional custom text field, reviewed by and reviewed at shown after action
+
+**Activity Log tab**: paginated table of audit events for this tailor showing action, changed by, timestamp
+
+---
+
+## Verification Queue Page
+
+Dedicated page showing only pending and under-review tailors. Two-panel layout: left panel is a list of tailors sorted by submission date oldest first, clicking selects them. Right panel shows selected tailor's documents as a full viewer, their profile summary, and two action buttons: Approve (green) and Reject (red, requires reason). After action the tailor moves off the queue and next one is selected automatically.
+
+---
+
+## Customer Management Page
+
+Same TanStack Table pattern. Filters: join date range, city, order count range, total spent range, flagged status toggle, account status. Columns: checkbox, avatar+name, phone, city, total orders, total spent, join date, status badge, actions menu (View, Suspend, Reinstate, Flag).
+
+Clicking row opens **Customer Detail page** with tabs:
+
+**Profile tab**: personal details in two columns, action buttons: Suspend (requires reason), Reinstate, Flag, view payment methods (show masked card last 4 digits only)
+
+**Orders tab**: order history table with status, type, amount, date, link to order
+
+**Disputes tab**: disputes raised by this customer with status and outcome
+
+**Reviews Written tab**: reviews this customer has written with tailor name, rating, date, moderate button
+
+**Activity Log tab**: audit events for this customer
+
+---
+
+## Order Management Page
+
+TanStack Table with color-coded status tab filters at top (All, Pending, Confirmed, In Progress, Ready, Delivered, Completed, Cancelled, Refunded). Additional filters: order type select, date range picker, tailor search, customer search, value range. Columns: order number, customer name, tailor name, type badge, total AED, commission AED, status badge, date, actions.
+
+Clicking row opens **Order Detail page**:
+
+Vertical status timeline component at top showing each status with actor name, timestamp, and note.
+
+Two-column layout below: left shows order items list with name, variant, quantity, unit price, total, and for custom stitch shows measurement data table, fabric choice, reference images gallery, design notes. Right column shows payment breakdown panel (subtotal, platform fee, commission, delivery, total, payment method, Stripe payment intent ID).
+
+Admin notes textarea below with auto-save on blur.
+
+Action panel at bottom: Refund section with full or partial toggle, amount input, reason input, Confirm Refund button. Force Cancel button (requires reason). Escalate to Dispute button. Mark Delivered button (if in shipped status).
+
+---
+
+## Dispute Management Page
+
+TanStack Table. Each row shows a SLA Timer column that counts down from 48 hours in green, turns amber below 25% remaining, turns red at breach. Table auto-refreshes every 30 seconds. Filters: status tabs (Open, Awaiting Response, Under Review, Resolved, Escalated), dispute type multi-select, assigned admin select, SLA status filter (breached/active), date range.
+
+Columns: dispute number, order number link, customer name, tailor name, type badge, status badge, assigned to, SLA timer, raised date, actions.
+
+Clicking row opens **Dispute Detail page**:
+
+Two-column evidence panel: left side shows customer claim text and their uploaded evidence images in a gallery. Right side shows tailor response text and their evidence images. If tailor has not responded yet right side shows "Awaiting tailor response" with time remaining.
+
+Message thread below: chat-style thread showing messages from customer, tailor, and admin. Toggle button switches between all messages and internal notes only. Internal admin notes render with amber left border and "Internal" label. Reply input with send button and internal note checkbox.
+
+Resolution panel at very bottom: Action dropdown (Full Refund to Customer, Partial Refund, Reject Claim, Require Redo, Issue Warning to Tailor, Suspend Tailor). Refund amount input shown conditionally. Resolution note textarea. Confirm Resolution button in green. After resolution a summary banner replaces the resolution panel.
+
+Below the table: Dispute Analytics section — Dispute Rate per Tailor bar chart showing top 10 tailors by dispute count, Type Breakdown donut chart, Average Resolution Time stat card, Outcome Distribution horizontal bar chart.
+
+---
+
+## Inventory Page
+
+Full-width TanStack Table of all listings across all tailors. Filters: tailor search, category multi-select, listing type select, status multi-select, price range slider. Columns: image thumbnail, title, tailor name, category, type badge, price AED, status badge, created date, actions menu (Preview, Approve, Reject, Feature, Remove).
+
+Clicking actions opens a **Listing Preview Drawer** from the right: image carousel at top, all listing details below, approve/reject/feature action buttons.
+
+**Approval Queue view** accessible via toggle at top of page: filters table to pending review listings only, sorted oldest first for fairness.
+
+Bulk approve and bulk reject available when rows selected, bulk reject requires shared reason input.
+
+---
+
+## Categories Page
+
+Nested tree view of all categories and subcategories. Each row shows category name (en and ar), slug, sort order, listing count, active toggle, edit button, delete button (disabled if has listings). Drag handle on each row for reorder. Add root category button at top. Inline edit on click shows name en, name ar, slug, icon upload field. Add subcategory button on each parent row adds a child node indented below.
+
+---
+
+## Featured Listings Page
+
+Three columns one per placement type: Homepage, Category Top, Search Top. Each column shows currently active featured listings as cards with listing image, tailor name, listing title, start date, end date, impressions, clicks, remove button. Add Featured Slot button per column opens modal with listing search, tailor filter, start and end date pickers.
+
+---
+
+## Reviews Page
+
+TanStack Table of all reviews. Filters: rating select (1-5), visibility toggle (visible/hidden), flagged toggle, date range, review type (customer to tailor / tailor to customer). Columns: reviewer name, reviewee name, rating stars, title, date, is flagged badge, is visible badge, actions.
+
+Flagged reviews section at top of page shown only when flagged count above zero: highlighted amber background panel listing flagged reviews first.
+
+Clicking a review opens **Review Moderation Drawer**: full review text, uploaded images in gallery, reviewer and reviewee names linked to their profiles. Action buttons: Keep Visible, Hide (requires reason select from template), Remove Permanently (requires confirmation dialog). After action status updates in the table row.
+
+Analytics below table: Platform Average Rating large stat, Review Volume This Month stat, Tailors Below 3.5 Rating list with tailor name and current average and link to tailor detail.
+
+---
+
+## Revenue Page
+
+Stat cards row with period filter applying to all simultaneously: GMV, Commission Earned, Subscription Revenue, Promotion Revenue, Refunded Commission, Net Revenue. Each card shows value and delta vs previous period.
+
+Revenue breakdown Recharts line chart below showing three lines (Readymade, Custom Stitch, Material) over time with toggle to switch to bar chart view.
+
+Commission Configuration panel below chart split into three sections:
+- Global Rates: three rows for Readymade, Custom Stitch, Material each with a percentage input and save button
+- Tier Overrides: table of subscription tiers with commission rate input per tier
+- Per-Tailor Overrides: tailor search input, results show current override if exists, edit rate, valid from and until date inputs, save and remove buttons
+
+Export buttons row: Revenue Report CSV, Revenue Report PDF, Per-Tailor Earnings Statement (opens modal with tailor select and date range), Refund Report CSV
+
+---
+
+## Payouts Page
+
+Payout Queue table: tailor name, available balance AED, pending balance AED, last payout date, status badge, Process button per row. Select all checkbox enables Bulk Process Selected button at top.
+
+Payout Schedule Configuration card: frequency select (Daily, Weekly, Bi-weekly), minimum threshold AED input, save button.
+
+Failed Payouts section below queue: list of failed payouts showing tailor name, amount, failure reason, failed date, Retry button per row.
+
+Payout History table below: all historical payouts with tailor, amount, commission deducted, net amount, period, date, status badge, Stripe transfer ID.
+
+---
+
+## Promotions Page
+
+Active Promotions overview: three-column grid by placement type (Homepage, Category Top, Search Top). Each slot shows as a card with listing image, tailor name, impressions count, clicks count, CTR, start and end date, Remove button. Add Promotion button per column type.
+
+Create Promotion modal: placement type select, tailor search, optional listing search within that tailor, start and end date pickers, amount paid AED input, Create button.
+
+Promotion Performance table below: all promotions with placement, tailor, listing, impressions, clicks, CTR, conversions, active badge, end date.
+
+Discount Codes section below: Create Code form (code input or generate random button, discount type toggle percentage or fixed, value input, min order AED input, max uses input, validity date range, order type applicability select, tailor scope optional). Codes table showing code, type, discount, min order, uses/max, valid dates, active badge, Deactivate button per row. Analytics below codes table: most used codes bar chart, total revenue impact stat, average discount applied stat.
+
+---
+
+## Notifications Page
+
+Broadcast Composer panel at top: audience type toggle (All Tailors, All Customers, Segment), when Segment selected show filter options (city multi-select, tier multi-select). Channel checkboxes: In-App, Email. Title English input, Title Arabic input, Body English textarea, Body Arabic textarea. Preview toggle switches to preview card showing how notification will appear. Recipient count shown dynamically. Send button with confirmation dialog.
+
+Message Center below: left panel is thread list with unread indicator, sender name, preview text, timestamp. Right panel is thread detail showing full message history in chat bubbles, reply textarea, send button, assign to agent dropdown at top of thread.
+
+---
+
+## Admin Users Page
+
+TanStack Table: name, email, role badge, 2FA status (enabled green / disabled red), last login, status badge, actions (Edit, Deactivate).
+
+Create Admin button opens modal: email input, full name input, role select (Super Admin, Operations Admin, Support Agent), temporary password input, 2FA enforcement toggle, Create button.
+
+Deactivate button opens confirmation dialog requiring typing the admin's name to confirm.
+
+Each row expandable to show last 10 audit actions by that admin.
+
+---
+
+## Settings Page
+
+Organized as tabbed sections:
+
+**Platform tab**: logo upload with preview, platform name en and ar inputs, supported cities multi-select, default currency display (AED fixed), maintenance mode toggle with confirmation dialog warning it blocks all non-admin access.
+
+**Onboarding tab**: required document types checkboxes (National ID, Trade License, Portfolio Certificate), mandatory customer fields checkboxes.
+
+**Policies tab**: cancellation policy rules table (order stage, who bears cost, refund percentage) with edit inline. Refund window inputs per order type in days. Dispute SLA hours input. Sample approval threshold amount input (custom stitch orders above this amount require sample approval step).
+
+**Security tab**: session timeout slider showing minutes. IP Allowlist table with IP or CIDR input to add, remove button per row. Admin 2FA enforcement global toggle. Login attempt lockout threshold input.
+
+**Integrations tab**: status panel showing four integration cards (Supabase, Cloudflare R2, Stripe, Upstash Redis) each with green connected or red disconnected status dot, last checked timestamp, test connection button. Stripe webhook endpoints list showing URL, events subscribed, regenerate secret button. API keys section showing any configured third-party keys masked with copy icon and revoke button.
+
+
+Build the **Khyate Inventory System** as a complete page within the existing admin dashboard and as a browsable section within the customer web app. Use the same stack: **React + TypeScript + Vite + Tailwind CSS + shadcn/ui + Recharts + TanStack Table**. Brand primary `#2D7A2D`, white backgrounds, Tabler icons, AED currency. Subtle animations only using Framer Motion: fade-in on mount, slide-in for drawers, smooth height transitions for expandable sections. No bouncy or decorative animations.
+
+---
+
+## Data Structure to Build
+
+**Material** has: name, name_ar, material_type (enum: wool, cotton, silk, micromodal, polyester, linen, chiffon, velvet, denim, georgette, crepe, satin, other), quality_tier (enum: affordable, premium, luxury), color (name, hex code, is_available), properties (array of tags: breathable, stretchable, wrinkle-resistant, hypoallergenic, dry-clean-only, machine-washable, lightweight, heavyweight, sheer, opaque), price_per_meter_fils, stock_meters, minimum_order_meters, origin_country, care_instructions, images (up to 5), is_active
+
+**Gender targeting** on every listing and tailor profile: enum (male, female, both). Female tailors or tailors accepting female customers are tagged. Customer filtering respects this. Female customers browsing see only tailors marked female or both.
+
+**Dress categories** are hierarchical: root gender → category → subcategory. Examples: Female → Traditional Wear → Abaya, Jalabiya, Kaftan | Female → Formal → Evening Gown, Suit, Blazer | Female → Casual → Dress, Top, Skirt | Male → Traditional → Kandura, Thobe, Bisht | Male → Formal → Suit, Blazer, Trousers, Shirt | Male → Casual → T-Shirt, Jeans, Shorts | Unisex → Sportswear, Workwear
+
+**Tailor plans**: Basic (free, 10 active listings, 15% commission, no featured), Professional (AED 99/month, 50 listings, 10% commission, 1 featured slot), Premium (AED 249/month, unlimited listings, 7% commission, 3 featured slots, priority dispute handling, verified badge, female-only filter eligibility)
+
+**Customer measurements** stored per profile: bust/chest cm, waist cm, hips cm, shoulder width cm, sleeve length cm, inseam cm, outseam cm, neck cm, thigh cm, ankle cm, wrist cm, height cm, weight kg, fit preference (slim, regular, loose). Customers can have multiple named measurement profiles (e.g. Self, Mother, Daughter). Default profile auto-attaches to every custom stitch order.
+
+**Sizes**: standard sizes (XS, S, M, L, XL, XXL, XXXL) plus custom (uses measurement profile). Tailors define which sizes they stock for readymade items.
+
+---
+
+## Admin Inventory Page
+
+### Page Layout
+
+Full-width page with a horizontal tab bar at top: **Materials** | **Categories** | **Tailor Plans** | **Size Management**. Active tab has green underline indicator. Each tab renders its own section below with a smooth fade transition.
+
+---
+
+### Materials Tab
+
+**Top bar**: search input, filter button opening filter panel, Add Material button (green, right-aligned)
+
+**Filter panel** (slides down below top bar, not a modal): material type multi-select chips, quality tier toggle group (Affordable / Premium / Luxury / All), gender applicability filter, color filter (color dot swatches to select), in-stock toggle, active/inactive toggle, price range slider in AED. Apply and Reset buttons.
+
+**Materials grid**: responsive grid of material cards, 3 columns on wide screens, 2 on medium. Each **Material Card** shows:
+- Top: hero image of material with quality tier badge overlaid top-right (Affordable in green, Premium in amber, Luxury in deep gold `#B8860B`)
+- Gender tag top-left (M / F / Both) as a small pill
+- Material name in 15px medium weight
+- Material type tag (wool, silk etc) in muted color
+- Color swatches row: filled circles 14px each, up to 6 shown with +N overflow indicator, hover shows color name tooltip
+- Price per meter in AED, bold
+- Stock meters remaining with a thin progress bar showing stock level (red below 10%, amber below 30%, green above)
+- Properties tags: first 3 shown, +N more on hover expanding inline
+- Active toggle switch
+- Three-dot menu: Edit, Duplicate, Deactivate, Delete
+
+Clicking a card or Edit opens the **Material Detail Drawer** from the right (480px wide, slides in with Framer Motion):
+
+**Material Detail Drawer** sections:
+- Image gallery at top: horizontal scroll of uploaded images, click to set as hero, add image button, delete per image, max 5
+- Basic info section: material name en, material name ar, material type select, quality tier select (Affordable / Premium / Luxury), gender applicability select (Male / Female / Both)
+- Pricing section: price per meter AED input, minimum order meters input, origin country input
+- Stock section: current stock meters input, low stock alert threshold input
+- Colors section: add color row with color picker wheel, color name input, is_available toggle. Existing colors listed as rows with swatch, name, available toggle, remove button. Add Color button adds new row.
+- Properties section: tag multi-select grid where each property is a toggleable chip. Selected chips show in green. Properties: Breathable, Stretchable, Wrinkle-Resistant, Hypoallergenic, Dry-Clean Only, Machine-Washable, Lightweight, Heavyweight, Sheer, Opaque, Anti-Pilling, Moisture-Wicking
+- Care instructions textarea
+- Active toggle
+- Save button (green, full width) and Cancel link
+
+**Add Material flow**: same drawer opens empty. Required fields highlighted on save attempt. Drawer title shows "Add Material" vs "Edit Material".
+
+**Bulk actions** when rows selected in a table view toggle (grid/table toggle button in top bar): export CSV, bulk activate, bulk deactivate, bulk update quality tier.
+
+**Table view** of materials (toggled from grid): TanStack Table with columns: image thumbnail, name, type badge, tier badge, colors count, stock meters, price/meter, gender pill, active toggle, actions.
+
+---
+
+### Categories Tab
+
+**Hierarchical tree** with three levels: Gender (Male / Female / Unisex) → Category → Subcategory.
+
+Gender level shows as large header rows with icon (male icon, female icon, intersect icon) and total category count.
+
+Category level: indented card rows showing category name en and ar, listing count, active toggle, edit icon, add subcategory button, drag handle.
+
+Subcategory level: further indented smaller rows with same controls.
+
+**Add Category button** at top right: opens inline form above the tree asking for gender select, category name en, name ar, parent category (optional for root categories), icon select from Tabler icon picker, sort order number. Save adds to tree with fade-in animation.
+
+**Inline edit**: clicking edit icon on any row makes name fields editable inline with save and cancel icons replacing the edit icon.
+
+**Drag to reorder**: within same parent only. Visual drag ghost and drop indicator line between items.
+
+**Delete**: only available if listing count is zero. Confirmation dialog required.
+
+---
+
+### Tailor Plans Tab
+
+Three plan cards displayed side by side: **Basic**, **Professional**, **Premium**.
+
+Each plan card shows:
+- Plan name large
+- Monthly price AED prominent (Basic shows "Free")
+- Annual price AED smaller below with "Save X%" badge
+- Active tailor count on this plan as a stat
+- Feature list with check icons (green) or cross icons (muted) per feature
+- Edit Plan button
+
+**Edit Plan drawer** (slides from right): plan name en and ar, monthly price fils input, annual price fils input, max active listings input (or unlimited toggle), commission rate percentage input, max featured slots input, featured slot eligibility toggle, priority dispute handling toggle, verified badge toggle, female customer eligibility toggle (only Premium and above can be listed for female customers if tailor enables it), save button.
+
+Below plan cards: **Plan Distribution chart** as a Recharts donut showing how many tailors are on each plan, with count and percentage labels.
+
+Below that: **Plan Revenue** stat cards showing monthly recurring revenue per plan and total MRR.
+
+---
+
+### Size Management Tab
+
+**Standard sizes table**: rows XS, S, M, L, XL, XXL, XXXL. Columns: size label, chest range cm, waist range cm, hips range cm, description, is_active toggle, edit inline. Add custom size button adds new row.
+
+**Measurement Fields configuration**: list of all measurement fields collected from customers. Each row shows: field name, field name ar, unit (cm/kg), is_required toggle, display order drag handle, description for customers. Add field button. This configuration drives what appears in the customer measurement profile form.
+
+**Size guide images**: upload size guide images per gender (Male size guide, Female size guide) that are shown to customers when selecting size. Upload button per gender, image preview, replace button.
+
+---
+
+## Customer Inventory Browsing Section
+
+### Discovery Filters (sidebar on desktop, bottom sheet on mobile)
+
+Gender selector at very top: **Male** | **Female** toggle. Selecting Female filters to only tailors marked female or both. This is the first filter, always visible, cannot be collapsed.
+
+Below gender toggle:
+- Category tree: expandable list of categories for the selected gender, clicking subcategory filters results
+- Material type: checkbox list of material types
+- Quality tier: three toggle chips (Affordable / Premium / Luxury), multi-select allowed
+- Color: color dot swatches grid, multi-select
+- Price range: dual-handle slider in AED per meter
+- Properties: chip multi-select (Breathable, Stretchable etc)
+- In stock only toggle
+- Tailor plan filter: show only Premium tailors toggle (shows verified badge tailors)
+
+All filters apply instantly with a subtle fade transition on the results grid. Active filter count badge on the filter button. Clear All Filters link.
+
+### Materials Browse Grid
+
+Same card design as admin but without management controls. Cards are clickable, opening Material Detail page.
+
+**Material Detail page** for customers:
+- Full-width hero image carousel with dot indicators, smooth slide transition
+- Quality tier badge and gender badge prominent
+- Material name large heading
+- Tailor name below linked to tailor profile
+- Color selector: row of filled circle swatches, clicking selects color and updates the hero image if color-specific images exist. Selected color shows with green ring
+- Properties as icon+label chips in a subtle gray surface row
+- Price per meter AED large, minimum order shown below
+- Stock availability: In Stock (green dot) / Low Stock (amber dot) / Out of Stock (red dot, add to waitlist button)
+- Quantity selector in meters with minimum enforced
+- Add to Cart button (green, full width)
+- Care instructions expandable section with smooth height animation
+- Origin country with flag emoji
+- Tailors using this material section: horizontal scroll of tailor cards who list this material, each with name, rating, city, view profile button
+
+### Customer Measurement Profiles
+
+Accessible from Account section and also prompted during checkout when order type is custom stitch.
+
+**Measurement Profiles list page**: cards per saved profile showing label, key measurements summary (bust/chest, waist, height), default badge, Edit button, Set as Default button, Delete button. Add New Profile button top right.
+
+**Measurement Profile form** (full page, not modal, because of form length):
+- Profile label input at top (e.g. "My Profile", "Mother")
+- Gender select: Male / Female (drives which fields are shown: Female shows bust, Male shows chest)
+- Illustrated body diagram SVG on the right side of the form (desktop) or above fields (mobile) with each measurement point highlighted as user focuses the corresponding input field
+- Measurement fields in logical groups:
+  - Upper body: bust or chest cm, shoulder width cm, neck cm, sleeve length cm, wrist cm
+  - Mid body: waist cm
+  - Lower body: hips cm, thigh cm, inseam cm, outseam cm, ankle cm
+  - General: height cm, weight kg
+  - Fit preference: three cards (Slim / Regular / Loose) with illustrated silhouette per option, click to select
+- Each input shows a helper text with how to measure (e.g. "Measure around fullest part of chest")
+- Save Profile button (green)
+- On save: success toast, redirect to profiles list
+
+**Measurement auto-attach behavior**: when customer proceeds to checkout for a custom stitch order, a step shows: "Select measurements to send with this order" with a card per saved profile and a "Use this profile" button. Selected profile data is embedded in order_items custom_specifications as a snapshot. If no profiles saved, inline mini form appears for key fields only (chest/bust, waist, hips, height) with option to save as profile.
+
+### Size Selection on Readymade Listings
+
+On readymade listing detail page: size selector row showing available sizes as toggle chips. Hovering a size chip shows a tooltip with the cm range for that size. "What's my size?" link opens a size guide modal showing the uploaded size guide image for that gender with measurement instructions and a simple lookup table. If customer has a saved measurement profile a "Suggest my size" button appears that calculates the best matching size from their profile and highlights it with a green ring automatically.
+
+---
+
+## Animations Specification
+
+All animations use Framer Motion with these exact behaviors: drawers slide in from right over 200ms with ease-out easing. Filter panel slides down with height animation over 150ms. Cards fade in on mount with staggered delay of 30ms per card. Color swatches expand on hover over 100ms. Property tags expand inline over 150ms. Page tab transitions fade out old content and fade in new over 150ms. Stock progress bars animate width on mount over 400ms ease-out. No spring animations. No rotation animations. No scale animations except 0.98 active press state on buttons. No parallax.
+
