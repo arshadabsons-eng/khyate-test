@@ -1,0 +1,856 @@
+@import "tailwindcss" source(none);
+@source "../src";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary-dark: var(--primary-dark);
+  --color-primary-soft: var(--primary-soft);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  /* Brand accents */
+  --color-gold: var(--gold);
+  --color-gold-dark: var(--gold-dark);
+  --color-ivory: var(--ivory);
+  --color-ink: var(--ink);
+  /* Fonts */
+  --font-serif: "Cormorant Garamond", Georgia, serif;
+  --font-sans: "Manrope", ui-sans-serif, system-ui, sans-serif;
+}
+
+:root {
+  --radius: 0.625rem;
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.18 0.02 150);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.18 0.02 150);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.18 0.02 150);
+  /* Khyate brand green #2D7A2D */
+  --primary: oklch(0.52 0.15 142);
+  --primary-foreground: oklch(1 0 0);
+  --primary-dark: oklch(0.4 0.13 142);
+  --primary-soft: oklch(0.95 0.04 142);
+  --secondary: oklch(0.97 0.01 150);
+  --secondary-foreground: oklch(0.2 0.02 150);
+  --muted: oklch(0.97 0.005 150);
+  --muted-foreground: oklch(0.5 0.02 150);
+  --accent: oklch(0.95 0.04 142);
+  --accent-foreground: oklch(0.3 0.1 142);
+  --destructive: oklch(0.58 0.22 27);
+  --destructive-foreground: oklch(1 0 0);
+  --success: oklch(0.55 0.16 145);
+  --success-foreground: oklch(1 0 0);
+  --warning: oklch(0.78 0.14 75);
+  --warning-foreground: oklch(0.25 0.05 75);
+  --info: oklch(0.6 0.15 240);
+  --info-foreground: oklch(1 0 0);
+  --border: oklch(0.92 0.01 150);
+  --input: oklch(0.92 0.01 150);
+  --ring: oklch(0.52 0.15 142);
+  --sidebar: oklch(0.52 0.15 142);
+  --sidebar-foreground: oklch(1 0 0);
+  --sidebar-accent: oklch(1 0 0 / 16%);
+  --sidebar-accent-foreground: oklch(1 0 0);
+  --sidebar-border: oklch(1 0 0 / 15%);
+  --chart-1: oklch(0.52 0.15 142);
+  --chart-2: oklch(0.65 0.18 90);
+  --chart-3: oklch(0.6 0.15 240);
+  --chart-4: oklch(0.7 0.16 50);
+  --chart-5: oklch(0.55 0.2 320);
+  /* Brand accents — gold #B68A3E, ivory #FBF9F4, ink #1C1B19 */
+  --gold: oklch(0.66 0.09 78);
+  --gold-dark: oklch(0.58 0.09 78);
+  --ivory: oklch(0.98 0.008 90);
+  --ink: oklch(0.2 0.01 60);
+}
+
+.dark {
+  --background: oklch(0.18 0.02 150);
+  --foreground: oklch(0.98 0 0);
+  --card: oklch(0.22 0.02 150);
+  --card-foreground: oklch(0.98 0 0);
+  --popover: oklch(0.22 0.02 150);
+  --popover-foreground: oklch(0.98 0 0);
+  --primary: oklch(0.6 0.15 142);
+  --primary-foreground: oklch(0.1 0.02 150);
+  --primary-dark: oklch(0.45 0.13 142);
+  --primary-soft: oklch(0.3 0.05 142);
+  --secondary: oklch(0.28 0.02 150);
+  --secondary-foreground: oklch(0.98 0 0);
+  --muted: oklch(0.28 0.02 150);
+  --muted-foreground: oklch(0.7 0.02 150);
+  --accent: oklch(0.3 0.05 142);
+  --accent-foreground: oklch(0.98 0 0);
+  --destructive: oklch(0.65 0.22 27);
+  --destructive-foreground: oklch(1 0 0);
+  --success: oklch(0.65 0.16 145);
+  --success-foreground: oklch(1 0 0);
+  --warning: oklch(0.78 0.14 75);
+  --warning-foreground: oklch(0.2 0.05 75);
+  --info: oklch(0.65 0.15 240);
+  --info-foreground: oklch(1 0 0);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.6 0.15 142);
+  --sidebar: oklch(0.4 0.13 142);
+  --sidebar-foreground: oklch(1 0 0);
+  --sidebar-accent: oklch(1 0 0 / 16%);
+  --sidebar-accent-foreground: oklch(1 0 0);
+  --sidebar-border: oklch(1 0 0 / 15%);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    font-weight: 400;
+    line-height: 1.5;
+    letter-spacing: -0.006em;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-variant-numeric: tabular-nums lining-nums;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  .font-serif {
+    font-family: var(--font-serif);
+    font-weight: 600;
+    letter-spacing: 0.005em;
+    line-height: 1.15;
+    color: var(--color-foreground);
+    text-wrap: balance;
+  }
+
+  .kh-h1 {
+    font-size: 1.875rem;
+    line-height: 1.12;
+    font-weight: 600;
+  }
+  .kh-h2 {
+    font-size: 1.5rem;
+    line-height: 1.18;
+    font-weight: 600;
+  }
+  .kh-h3 {
+    font-size: 1.125rem;
+    line-height: 1.3;
+    font-weight: 600;
+  }
+
+  p {
+    line-height: 1.6;
+  }
+  .text-muted-foreground {
+    letter-spacing: 0;
+  }
+
+  .tabular-nums,
+  .kh-value,
+  table td,
+  table th {
+    font-variant-numeric: tabular-nums lining-nums;
+  }
+
+  table {
+    letter-spacing: -0.003em;
+  }
+}
+
+/* ─── Khyate Motion System ─────────────────────────────────────────────────── */
+
+@keyframes kh-fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes kh-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes kh-scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes kh-shimmer {
+  0% {
+    background-position: -400px 0;
+  }
+  100% {
+    background-position: 400px 0;
+  }
+}
+@keyframes kh-slide-in-left {
+  from {
+    opacity: 0;
+    transform: translateX(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+@keyframes kh-count-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+    filter: blur(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0);
+  }
+}
+
+/* On save: the panel folds toward its header and flies off toward the top-right —
+   reads as "sent to the customer" instead of an abrupt close. Was 3s, which left
+   the still-opaque, still-interactive dialog shell frozen behind the shrinking
+   content for a very long beat, then popped away abruptly once suppressed —
+   shortened to under a second, with the fly phase reworked to 35%/65% so there's
+   no dead air, and paired with kh-shell-fade (below) so the shell dissolves WITH
+   the content instead of sitting there inert. */
+@keyframes kh-fold-send {
+  0% {
+    opacity: 1;
+    transform: scale(1) translate(0, 0) rotate(0deg);
+  }
+  35% {
+    opacity: 1;
+    transform: scaleY(0.9) scale(0.97) translate(0, -6px) rotate(0deg);
+  }
+  100% {
+    opacity: 0;
+    transform: scaleY(0.5) scale(0.55) translate(18vw, -22vh) rotate(4deg);
+  }
+}
+.kh-fold-send {
+  animation: kh-fold-send 0.9s cubic-bezier(0.4, 0, 0.2, 1) both;
+  transform-origin: top center;
+}
+
+/* Fades the dialog shell itself (background + close button) out across the same
+   window the content is flying away in, so nothing is left looking frozen. */
+@keyframes kh-shell-fade {
+  0%, 35% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+.kh-shell-fade {
+  animation: kh-shell-fade 0.9s cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
+/* Page-level entrance — apply to the main content wrapper */
+.kh-page {
+  animation: kh-fade-in-up 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* Staggered children — add .kh-stagger to a container */
+.kh-stagger > * {
+  animation: kh-fade-in-up 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.kh-stagger > *:nth-child(1) {
+  animation-delay: 0ms;
+}
+.kh-stagger > *:nth-child(2) {
+  animation-delay: 60ms;
+}
+.kh-stagger > *:nth-child(3) {
+  animation-delay: 110ms;
+}
+.kh-stagger > *:nth-child(4) {
+  animation-delay: 155ms;
+}
+.kh-stagger > *:nth-child(5) {
+  animation-delay: 195ms;
+}
+.kh-stagger > *:nth-child(6) {
+  animation-delay: 230ms;
+}
+.kh-stagger > *:nth-child(7) {
+  animation-delay: 260ms;
+}
+.kh-stagger > *:nth-child(8) {
+  animation-delay: 285ms;
+}
+.kh-stagger > *:nth-child(n + 9) {
+  animation-delay: 310ms;
+}
+
+/* Card component */
+.kh-card {
+  animation: kh-scale-in 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+  box-shadow:
+    0 1px 2px oklch(0 0 0 / 4%),
+    0 1px 3px oklch(0 0 0 / 6%);
+  transition:
+    box-shadow 0.2s ease,
+    transform 0.2s ease,
+    border-color 0.2s ease;
+}
+.kh-card:hover {
+  box-shadow: 0 4px 24px -4px oklch(0 0 0 / 10%);
+  transform: translateY(-1px);
+}
+
+/* Stat card gold accent — appears on hover */
+.kh-stat {
+  position: relative;
+  overflow: hidden;
+}
+.kh-stat::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--color-gold);
+  border-radius: 2px 0 0 2px;
+  transform: scaleY(0);
+  transform-origin: bottom;
+  transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.kh-stat:hover::before {
+  transform: scaleY(1);
+}
+
+/* Stat value count-in */
+.kh-value {
+  display: inline-block;
+  animation: kh-count-in 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* Sidebar active item indicator */
+.kh-nav-active {
+  position: relative;
+}
+.kh-nav-active::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  top: 25%;
+  bottom: 25%;
+  width: 3px;
+  background: oklch(1 0 0 / 70%);
+  border-radius: 2px;
+  animation: kh-slide-in-left 0.2s ease both;
+}
+
+/* Shimmer skeleton */
+.kh-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--color-muted) 25%,
+    oklch(0.95 0.005 150) 50%,
+    var(--color-muted) 75%
+  );
+  background-size: 800px 100%;
+  animation: kh-shimmer 1.6s infinite linear;
+}
+
+/* Table row stagger */
+.kh-table tbody tr {
+  animation: kh-fade-in 0.3s ease both;
+}
+.kh-table tbody tr:nth-child(1) {
+  animation-delay: 0ms;
+}
+.kh-table tbody tr:nth-child(2) {
+  animation-delay: 35ms;
+}
+.kh-table tbody tr:nth-child(3) {
+  animation-delay: 65ms;
+}
+.kh-table tbody tr:nth-child(4) {
+  animation-delay: 90ms;
+}
+.kh-table tbody tr:nth-child(5) {
+  animation-delay: 112ms;
+}
+.kh-table tbody tr:nth-child(6) {
+  animation-delay: 130ms;
+}
+.kh-table tbody tr:nth-child(n + 7) {
+  animation-delay: 145ms;
+}
+
+/* Section fade — for individual sections within a page */
+.kh-section {
+  animation: kh-fade-in-up 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.kh-section:nth-child(1) {
+  animation-delay: 0ms;
+}
+.kh-section:nth-child(2) {
+  animation-delay: 80ms;
+}
+.kh-section:nth-child(3) {
+  animation-delay: 150ms;
+}
+.kh-section:nth-child(4) {
+  animation-delay: 210ms;
+}
+.kh-section:nth-child(n + 5) {
+  animation-delay: 260ms;
+}
+
+/* Premium glass toggle — recessed inner shadow in both states */
+.kh-switch {
+  box-shadow:
+    inset 0 1px 2px oklch(0 0 0 / 10%),
+    inset 0 -1px 1px oklch(1 0 0 / 30%);
+}
+
+/* Elevation utility — soft luxury lift for cards/images on hover */
+.kh-elevate {
+  transition:
+    box-shadow 0.25s ease,
+    transform 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.kh-elevate:hover {
+  box-shadow: 0 12px 40px -12px oklch(0 0 0 / 22%);
+  transform: translateY(-3px);
+}
+
+/* Image hover-zoom — wrap an <img> in a .kh-zoom container */
+.kh-zoom {
+  overflow: hidden;
+}
+.kh-zoom img {
+  transition: transform 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform;
+}
+.kh-zoom:hover img {
+  transform: scale(1.06);
+}
+
+/* Add-to-cart fly clone (positioned + animated via WAAPI in lib/cartFly.ts) */
+.kh-fly-clone {
+  position: fixed;
+  z-index: 9999;
+  border-radius: 0.75rem;
+  object-fit: cover;
+  box-shadow: 0 18px 50px -12px oklch(0 0 0 / 45%);
+  pointer-events: none;
+}
+
+/* Cart badge / target bump when an item lands */
+@keyframes kh-cart-bump {
+  0% {
+    transform: scale(1);
+  }
+  35% {
+    transform: scale(1.28);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+.kh-cart-bump {
+  animation: kh-cart-bump 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Zoom-blur crossfade for the lightbox / product viewer */
+@keyframes kh-zoom-blur-in {
+  from {
+    opacity: 0;
+    transform: scale(1.04);
+    filter: blur(12px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+    filter: blur(0);
+  }
+}
+.kh-zoom-blur-in {
+  animation: kh-zoom-blur-in 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* Slim sticky bottom CTA bar (storefront, mobile) */
+.kh-sticky-cta {
+  animation: kh-fade-in-up 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+  -webkit-backdrop-filter: blur(10px) saturate(1.4);
+  backdrop-filter: blur(10px) saturate(1.4);
+}
+
+/* Subtle emerald+gold "weave" texture — for hero / section backgrounds (very low alpha) */
+.kh-weave {
+  background-image:
+    repeating-linear-gradient(45deg, oklch(0.52 0.15 142 / 3.5%) 0 1px, transparent 1px 15px),
+    repeating-linear-gradient(-45deg, oklch(0.66 0.09 78 / 3.5%) 0 1px, transparent 1px 15px);
+}
+
+/* Ambient "threads" — barely-there drifting weave for the tailor workspace.
+   ~2-3% alpha, drifting via a GPU transform (no repaint): present, never noticed. */
+@keyframes kh-threads-drift {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    transform: translate3d(-96px, -96px, 0);
+  } /* 4× the 24px tile → seamless loop */
+}
+.kh-threads {
+  position: relative;
+  overflow: hidden;
+}
+.kh-threads::before {
+  content: "";
+  position: absolute;
+  inset: -120px; /* oversized so the drift never reveals an edge */
+  z-index: 0;
+  pointer-events: none;
+  will-change: transform;
+  background-image:
+    repeating-linear-gradient(45deg, oklch(0.52 0.15 142 / 2.5%) 0 1px, transparent 1px 24px),
+    repeating-linear-gradient(-45deg, oklch(0.66 0.09 78 / 2%) 0 1px, transparent 1px 24px);
+  animation: kh-threads-drift 48s linear infinite;
+}
+.kh-threads > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* Tasteful CSS 3D tilt — editorial depth on hover (cards/images). Pair with bg/overflow-hidden. */
+.kh-tilt {
+  transition:
+    transform 0.4s var(--kh-ease),
+    box-shadow 0.3s ease;
+  transform-style: preserve-3d;
+}
+.kh-tilt:hover {
+  transform: perspective(900px) translateY(-4px) rotateX(2.2deg);
+  box-shadow: 0 20px 52px -18px oklch(0 0 0 / 24%);
+}
+
+/* Scroll reveal — base hidden state; .is-visible (added by <Reveal/>) animates it in.
+   transition-delay is set inline per item for staggering. */
+.kh-reveal {
+  opacity: 0;
+  transform: translateY(22px);
+  transition:
+    opacity 0.6s var(--kh-ease),
+    transform 0.6s var(--kh-ease);
+  will-change: opacity, transform;
+}
+.kh-reveal.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Progressive blur-up — <BlurImage/> toggles .is-loaded once the image decodes */
+.kh-blur-img {
+  filter: blur(14px);
+  transform: scale(1.04);
+  transition:
+    filter 0.7s var(--kh-ease),
+    transform 0.7s var(--kh-ease);
+}
+.kh-blur-img.is-loaded {
+  filter: blur(0);
+  transform: scale(1);
+}
+
+/* ─── Khyate Alive Layer — global micro-interactions ───────────────────────── */
+:root {
+  --kh-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --kh-fast: 0.15s;
+  --kh-med: 0.22s;
+  --kh-lift: -2px;
+  --kh-press: 0.97;
+}
+
+button:not(:disabled),
+[role="button"]:not([aria-disabled="true"]),
+a[class*="bg-primary"],
+a[class*="bg-secondary"],
+a[class*="border-input"] {
+  transition:
+    transform var(--kh-med) var(--kh-ease),
+    box-shadow var(--kh-med) var(--kh-ease),
+    background-color var(--kh-fast) ease,
+    border-color var(--kh-fast) ease,
+    color var(--kh-fast) ease,
+    opacity var(--kh-fast) ease;
+}
+button[class*="shadow"]:not(:disabled):hover,
+a[class*="shadow"][class*="bg-"]:hover {
+  transform: translateY(var(--kh-lift));
+}
+button:not(:disabled):active,
+[role="button"]:not([aria-disabled="true"]):active {
+  transform: scale(var(--kh-press));
+}
+
+input,
+textarea,
+select,
+[contenteditable="true"] {
+  transition:
+    border-color var(--kh-med) var(--kh-ease),
+    box-shadow var(--kh-med) var(--kh-ease),
+    background-color var(--kh-fast) ease;
+}
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  box-shadow: 0 0 0 3px oklch(from var(--color-ring) l c h / 18%);
+}
+
+tbody tr {
+  transition:
+    background-color var(--kh-fast) ease,
+    box-shadow var(--kh-fast) ease;
+}
+tbody tr[class*="cursor-pointer"]:hover {
+  box-shadow: inset 2px 0 0 0 var(--color-gold);
+}
+
+.kh-nav {
+  transition:
+    background-color var(--kh-fast) ease,
+    color var(--kh-fast) ease,
+    padding-left var(--kh-med) var(--kh-ease);
+}
+.kh-nav:hover:not(.kh-nav-active) {
+  padding-left: calc(var(--kh-nav-pad, 0.75rem) + 3px);
+}
+
+[role="tab"] {
+  transition:
+    color var(--kh-fast) ease,
+    background-color var(--kh-fast) ease;
+}
+
+/* ─── Adaptive shell — fluid containers, consistent with the in-app PageContainer.
+   Same 1760px cap + padding scale the admin/tailor dashboards use, so the public
+   surface fills the screen the exact same way (no boxed-in gutters, no mismatch). */
+.kh-shell,
+.kh-shell-wide,
+.kh-shell-tight {
+  width: 100%;
+  margin-inline: auto;
+  padding-inline: clamp(1rem, 3vw, 2.5rem);
+}
+.kh-shell,
+.kh-shell-wide {
+  max-width: 1760px; /* matches PageContainer "wide" — fills laptop→monitor */
+}
+.kh-shell-tight {
+  max-width: 70rem; /* reading-width content (legal, prose) */
+}
+
+/* Fluid display type — scales the hero with the viewport so it fills the screen */
+.kh-display {
+  font-size: clamp(2.75rem, 6.2vw, 6.5rem);
+  line-height: 1.02;
+  letter-spacing: -0.012em;
+}
+.kh-lead {
+  font-size: clamp(1.05rem, 1.15vw, 1.35rem);
+  line-height: 1.6;
+}
+
+/* ─── Glassmorphism — frosted panels for chrome, pills & overlays ──────────── */
+.kh-glass {
+  background: oklch(1 0 0 / 55%);
+  -webkit-backdrop-filter: blur(18px) saturate(1.6);
+  backdrop-filter: blur(18px) saturate(1.6);
+  border: 1px solid oklch(1 0 0 / 55%);
+  box-shadow:
+    0 10px 36px -14px oklch(0 0 0 / 20%),
+    inset 0 1px 0 oklch(1 0 0 / 60%);
+}
+.kh-glass-soft {
+  background: oklch(1 0 0 / 32%);
+  -webkit-backdrop-filter: blur(14px) saturate(1.4);
+  backdrop-filter: blur(14px) saturate(1.4);
+  border: 1px solid oklch(1 0 0 / 45%);
+}
+
+/* ─── Royal ambient — a slow aurora bloom behind hero bands ────────────────── */
+@keyframes kh-aurora {
+  0% {
+    transform: translate3d(-4%, -2%, 0) scale(1.04);
+  }
+  50% {
+    transform: translate3d(4%, 3%, 0) scale(1.12);
+  }
+  100% {
+    transform: translate3d(-4%, -2%, 0) scale(1.04);
+  }
+}
+.kh-aurora {
+  position: relative;
+  isolation: isolate;
+}
+.kh-aurora::before {
+  content: "";
+  position: absolute;
+  inset: -25%;
+  z-index: -1;
+  pointer-events: none;
+  will-change: transform;
+  background:
+    radial-gradient(36% 42% at 22% 26%, oklch(0.52 0.15 142 / 13%), transparent 70%),
+    radial-gradient(32% 38% at 82% 20%, oklch(0.66 0.09 78 / 13%), transparent 70%),
+    radial-gradient(46% 50% at 60% 84%, oklch(0.52 0.15 142 / 9%), transparent 72%);
+  animation: kh-aurora 24s ease-in-out infinite;
+}
+
+/* Gentle float — hero mockup drift */
+@keyframes kh-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-12px);
+  }
+}
+.kh-float {
+  animation: kh-float 7s ease-in-out infinite;
+}
+
+/* Sheen — a luxe highlight sweep across a surface on hover */
+.kh-sheen {
+  position: relative;
+  overflow: hidden;
+}
+.kh-sheen::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(115deg, transparent 32%, oklch(1 0 0 / 38%) 48%, transparent 64%);
+  transform: translateX(-130%);
+  transition: transform 0.85s var(--kh-ease);
+}
+.kh-sheen:hover::after {
+  transform: translateX(130%);
+}
+
+/* Respect reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+  .kh-page,
+  .kh-stagger > *,
+  .kh-card,
+  .kh-value,
+  .kh-stat::before,
+  .kh-nav-active::after,
+  .kh-section,
+  .kh-table tbody tr,
+  .kh-elevate,
+  .kh-zoom img,
+  .kh-cart-bump,
+  .kh-zoom-blur-in,
+  .kh-sticky-cta,
+  .kh-tilt,
+  .kh-reveal,
+  .kh-blur-img,
+  .kh-threads::before,
+  .kh-aurora::before,
+  .kh-float,
+  .kh-sheen::after,
+  button,
+  [role="button"],
+  a,
+  input,
+  textarea,
+  select,
+  tbody tr,
+  .kh-nav,
+  [role="tab"] {
+    animation: none !important;
+    transform: none !important;
+    filter: none !important;
+  }
+  /* Scroll-reveal must not leave content invisible when motion is reduced */
+  .kh-reveal {
+    opacity: 1 !important;
+  }
+  .kh-shimmer {
+    animation: none !important;
+    background: var(--color-muted);
+  }
+}
