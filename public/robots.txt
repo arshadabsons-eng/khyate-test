@@ -1,0 +1,11 @@
+# Public marketing/storefront pages are crawlable; the authenticated admin and
+# tailor workspaces (and the auth flows) are private app shells with nothing
+# useful to index.
+User-agent: *
+Allow: /
+Disallow: /_app/
+Disallow: /tailor
+Disallow: /login
+Disallow: /signup
+Disallow: /verify
+Disallow: /auth/
